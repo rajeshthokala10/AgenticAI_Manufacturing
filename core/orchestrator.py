@@ -35,15 +35,22 @@ RULES:
 
 
 class Orchestrator:
-    def __init__(self, documents: List[Dict], knowledge_graph: KnowledgeGraph):
+    def __init__(
+        self,
+        documents: List[Dict],
+        knowledge_graph: KnowledgeGraph,
+        vector_retriever: Optional[object] = None,
+        skip_vector_build: bool = False,
+    ):
         self.documents = documents
         self.knowledge_graph = knowledge_graph
-        self.retriever = HybridRetriever(documents, knowledge_graph)
+        self.retriever = HybridRetriever(documents, knowledge_graph, vector_retriever)
         self._indexed = False
+        self._skip_vector_build = skip_vector_build
 
     def initialize(self) -> None:
         if not self._indexed:
-            self.retriever.build_indexes()
+            self.retriever.build_indexes(skip_vector=self._skip_vector_build)
             self._indexed = True
 
     def process_query(self, raw_query: str) -> Dict:

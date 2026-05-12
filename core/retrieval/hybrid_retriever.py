@@ -2,26 +2,38 @@ from typing import List, Dict, Set, Optional
 
 from config import RRF_K, TOP_K_RETRIEVAL, TOP_K_RERANK
 from core.retrieval.bm25_retriever import BM25Retriever
-from core.retrieval.vector_retriever import VectorRetriever
 from core.retrieval.graph_retriever import GraphRetriever
 from core.knowledge_graph import KnowledgeGraph
 
+try:
+    from core.retrieval.vector_retriever import VectorRetriever
+except ImportError:
+    # ChromaDB unavailable — fall back to FAISS-backed retriever.
+    from pipeline.faiss_retriever import FaissVectorRetriever as VectorRetriever  # type: ignore
+
 
 class HybridRetriever:
-    def __init__(self, documents: List[Dict], knowledge_graph: KnowledgeGraph):
+    def __init__(
+        self,
+        documents: List[Dict],
+        knowledge_graph: KnowledgeGraph,
+        vector_retriever: Optional[object] = None,
+    ):
         self.documents = documents
         self.doc_map = {doc["chunk_id"]: doc for doc in documents}
         self.knowledge_graph = knowledge_graph
 
         self.bm25 = BM25Retriever()
-        self.vector = VectorRetriever()
+        # Caller can inject a FAISS-backed retriever for the unified pipeline.
+        self.vector = vector_retriever if vector_retriever is not None else VectorRetriever()
         self.graph = GraphRetriever(knowledge_graph)
 
-    def build_indexes(self) -> None:
+    def build_indexes(self, skip_vector: bool = False) -> None:
         print("  Building BM25 index...")
         self.bm25.build_index(self.documents)
-        print("  Building vector index...")
-        self.vector.build_index(self.documents)
+        if not skip_vector:
+            print("  Building vector index...")
+            self.vector.build_index(self.documents)
         print("  Indexes built.")
 
     def retrieve(self, query: str, use_graph_filter: bool = True, top_k: int = TOP_K_RERANK) -> List[Dict]:

@@ -223,15 +223,24 @@ class KnowledgeGraph:
 
     def _match_query_to_entities(self, query: str) -> Set[str]:
         matched = set()
-        equipment_ids = re.findall(r'(?:P-\d{3}|CV-\d{3}|HP-\d{3})', query)
-        alarm_codes = re.findall(r'ALM-[A-Z]\d{3}', query)
-        part_numbers = re.findall(r'SP-\d{4}', query)
-        fault_codes = re.findall(r'FC-\d{3}', query)
+        equipment_ids = re.findall(
+            r'(?:P-\d{3}|CV-\d{3}|HP-\d{3}|CNC-[A-Z]-\d{3}|'
+            r'STAMP-[A-Z]-\d{3}|WELD-[A-Z]-\d{3}|HT-[A-Z]-\d{3}|COAT-[A-Z]-\d{3})',
+            query,
+            re.IGNORECASE,
+        )
+        alarm_codes = re.findall(r'ALM-[A-Z]\d{3}', query, re.IGNORECASE)
+        part_numbers = re.findall(
+            r'(?:SP-\d{4}|TH-\d{4}|BRK-\d{4}|SFT-\d{4}|HSG-\d{4}|GR-\d{4})',
+            query,
+            re.IGNORECASE,
+        )
+        fault_codes = re.findall(r'FC-\d{3}', query, re.IGNORECASE)
 
-        matched.update(equipment_ids)
-        matched.update(alarm_codes)
-        matched.update(part_numbers)
-        matched.update(fault_codes)
+        matched.update(e.upper() for e in equipment_ids)
+        matched.update(a.upper() for a in alarm_codes)
+        matched.update(p.upper() for p in part_numbers)
+        matched.update(f.upper() for f in fault_codes)
 
         query_lower = query.lower()
         symptom_keywords = {
@@ -280,7 +289,8 @@ class KnowledgeGraph:
         }
 
     def save(self) -> None:
-        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        graph_path = Path(GRAPH_PATH)
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
         save_data = {
             "nodes": {},
             "edges": []
@@ -299,13 +309,14 @@ class KnowledgeGraph:
                 "prior": data.get("prior", 0.0),
                 "chunk_ids": list(data.get("chunk_ids", set()))
             })
-        with open(GRAPH_PATH, "w") as f:
+        with open(graph_path, "w") as f:
             json.dump(save_data, f, indent=2)
 
     def load(self) -> bool:
-        if not Path(GRAPH_PATH).exists():
+        graph_path = Path(GRAPH_PATH)
+        if not graph_path.exists():
             return False
-        with open(GRAPH_PATH, "r") as f:
+        with open(graph_path, "r") as f:
             save_data = json.load(f)
         self.graph = nx.DiGraph()
         for node_id, data in save_data["nodes"].items():

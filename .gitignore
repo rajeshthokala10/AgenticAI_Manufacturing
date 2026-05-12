@@ -6,3 +6,5 @@ data/processed/
 *.egg-info/
 dist/
 build/
+.claude/
+doc_pipeline/output/

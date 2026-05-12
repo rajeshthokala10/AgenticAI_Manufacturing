@@ -2,8 +2,12 @@ import time
 from typing import Dict, List
 
 from config import TOP_K_RERANK, CLASSICAL_RAG_MODEL
-from core.retrieval.vector_retriever import VectorRetriever
 from core.llm_client import call_llm_with_metrics
+
+try:
+    from core.retrieval.vector_retriever import VectorRetriever
+except ImportError:
+    from pipeline.faiss_retriever import FaissVectorRetriever as VectorRetriever  # type: ignore
 
 
 CLASSICAL_RAG_PROMPT = """You are a manufacturing equipment assistant. Use ONLY the provided context
@@ -16,10 +20,11 @@ Answer the user's question based on the context above."""
 
 
 class ClassicalRAG:
-    def __init__(self, documents: List[Dict]):
+    def __init__(self, documents: List[Dict], vector_retriever=None,
+                 skip_index_build: bool = False):
         self.documents = documents
-        self.vector = VectorRetriever()
-        self._indexed = False
+        self.vector = vector_retriever or VectorRetriever()
+        self._indexed = skip_index_build
 
     def initialize(self) -> None:
         if not self._indexed:

@@ -1,6 +1,5 @@
 streamlit>=1.28.0
 openai>=1.0.0
-chromadb>=0.4.0
 networkx>=3.0
 rank-bm25>=0.2.2
 pandas>=2.0.0
@@ -12,3 +11,7 @@ tiktoken>=0.5.0
 pdfplumber>=0.10.0
 plotly>=5.18.0
 python-dotenv>=1.0.0
+faiss-cpu>=1.7.4
+reportlab>=4.0.0
+# Optional: ChromaDB-backed vector retriever (FAISS is the default).
+# chromadb>=0.4.0

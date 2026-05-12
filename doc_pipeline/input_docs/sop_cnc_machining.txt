@@ -1,0 +1,96 @@
+STANDARD OPERATING PROCEDURE: CNC MACHINING CENTER OPERATION
+Document ID: SOP-CNC-001 | Revision: 7 | Effective Date: 2026-01-15
+Department: CNC Machining | Plant: Plant A
+Prepared by: James Rodriguez, Manufacturing Engineer
+Approved by: Sarah Chen, Quality Manager
+
+=== 1. PURPOSE ===
+This SOP defines the step-by-step procedure for operating CNC machining centers
+(Mori Seiki NHX5000 and DMG Mori NLX2500) at SteelForge Manufacturing Plant A.
+It ensures consistent part quality, operator safety, and equipment longevity.
+
+=== 2. SCOPE ===
+Applies to all CNC operators (Grade C3 and above), setup technicians, and
+production supervisors in the CNC Machining department. Covers operations for
+aluminum, steel, stainless steel, and titanium workpieces.
+
+=== 3. SAFETY REQUIREMENTS ===
+- Mandatory PPE: Safety glasses (ANSI Z87.1), steel-toe boots, hearing
+  protection (when noise > 85 dBA), cut-resistant gloves (ANSI A4 rating)
+- Verify machine guarding is intact and interlocks functional before startup
+- Confirm emergency stop (E-stop) buttons are accessible and operational
+- Never reach into the work envelope while spindle is rotating
+- Ensure coolant concentration is between 6-8% (check with refractometer)
+- Lock out/Tag out per SOP-LOTO-001 before any tool change or adjustment
+
+=== 4. PRE-OPERATION CHECKLIST ===
+4.1 Machine Warm-Up
+    - Power on machine and allow 15-minute warm-up cycle
+    - Run spindle warm-up program (O9001) at 500, 2000, 5000, 8000 RPM
+    - Verify axis home positions using reference marks
+    - Check hydraulic pressure: 70-80 bar nominal
+    - Verify coolant level in sump (minimum 75% full)
+    - Check chip conveyor operation
+
+4.2 Tooling Setup
+    - Load tool list from job sheet (MES terminal)
+    - Verify tool offsets using Renishaw OMP60 probe
+    - Confirm tool life remaining in Tool Management System (TMS)
+    - Replace any tools below 20% remaining life
+    - Verify collet/chuck runout < 0.005mm using dial indicator
+
+4.3 Work Holding
+    - Select fixture per engineering drawing callout
+    - Verify fixture locating surfaces are clean and free of chips
+    - Torque fixture bolts per specification (typically 45 Nm for M12)
+    - Verify part seating using air-sensing circuit (green light = seated)
+
+=== 5. PRODUCTION OPERATION ===
+5.1 First Article Run
+    - Run first piece at 80% programmed feed rate
+    - Perform 100% dimensional inspection per FAI checklist
+    - Record measurements in MES quality module
+    - Obtain Quality Inspector sign-off before production release
+    - Retain first article as reference sample in labeled bag
+
+5.2 Normal Production
+    - Run program at programmed speeds and feeds
+    - Monitor tool wear indicators on HMI display
+    - Perform in-process gauging per control plan frequency:
+      * Critical dimensions: every 5th part
+      * Standard dimensions: every 25th part
+      * Surface finish (Ra): every 50th part
+    - Record SPC data points in real-time via shop floor terminal
+    - Flag any Cpk < 1.33 to Quality Engineer immediately
+
+5.3 Tool Change Procedure
+    - When TMS signals tool life expiry, pause program at safe point
+    - Follow LOTO abbreviated procedure (SOP-LOTO-001 Section 4.2)
+    - Replace tool and reset tool offset using probe cycle
+    - Run single-part verification at reduced feed rate
+    - Resume production after dimensional confirmation
+
+=== 6. POST-OPERATION ===
+    - Run machine clean-up cycle (O9099)
+    - Remove all workpieces and tooling from table
+    - Clean chip pan and empty chip hopper
+    - Top off coolant if below 80% level
+    - Log production quantity and downtime in MES
+    - Complete shift handover form (Form SH-201)
+    - Report any machine anomalies on CMMS work request
+
+=== 7. TROUBLESHOOTING GUIDE ===
+| Symptom                    | Probable Cause            | Action                    |
+|---------------------------|--------------------------|---------------------------|
+| Chatter marks on surface  | Tool wear / wrong RPM    | Replace tool, verify RPM  |
+| Dimension out of tolerance| Thermal drift / tool wear | Re-probe, check coolant   |
+| Poor surface finish (Ra)  | Feed rate too high        | Reduce feed 10-15%        |
+| Coolant foaming           | Concentration too high    | Dilute to 6-8% range      |
+| Spindle alarm             | Overload / bearing issue  | Stop, call maintenance    |
+| Chip evacuation problem   | Conveyor jam              | Clear jam, check auger    |
+
+=== 8. REVISION HISTORY ===
+Rev 7 (2026-01-15): Added titanium machining parameters, updated PdM references
+Rev 6 (2025-07-01): Updated tool life management per TMS upgrade
+Rev 5 (2025-01-10): Added cobot loading integration procedure
+Rev 4 (2024-06-15): Revised safety section per new OSHA guidance
