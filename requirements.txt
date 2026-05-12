@@ -13,5 +13,9 @@ plotly>=5.18.0
 python-dotenv>=1.0.0
 faiss-cpu>=1.7.4
 reportlab>=4.0.0
+# FastAPI backend that powers the Next.js Claude-style chat UI
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
 # Optional: ChromaDB-backed vector retriever (FAISS is the default).
 # chromadb>=0.4.0

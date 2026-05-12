@@ -169,6 +169,32 @@ COMMON_ENGLISH_WORDS = {
     "plant", "part", "parts", "team", "area", "zone", "unit", "units",
     "use", "used", "using", "after", "before", "between", "during",
     "only", "also", "just", "still", "even", "much", "very",
+    # Troubleshooting verbs/nouns commonly used in manufacturing queries —
+    # protected from being "auto-corrected" into similarly-spelled acronyms
+    # (e.g. fail → FAI, lock → LTI, etc.).
+    "fail", "fails", "failed", "failing", "failure", "failures",
+    "break", "breaks", "broke", "broken", "breaking", "breakdown", "breakdowns",
+    "start", "starts", "started", "starting",
+    "stop", "stops", "stopped", "stopping",
+    "shut", "shutdown", "shutdowns",
+    "error", "errors", "fault", "faults",
+    "alarm", "alarms", "alert", "alerts",
+    "leak", "leaks", "leaking", "leaked",
+    "smoke", "smoking", "smoked",
+    "crack", "cracks", "cracked", "cracking",
+    "jam", "jams", "jammed", "jamming",
+    "stuck", "loose",
+    "noise", "noisy",
+    "happen", "happens", "happened", "happening",
+    "occur", "occurs", "occurred", "occurring",
+    "issue", "issues", "problem", "problems", "trouble",
+    "cause", "causes", "caused", "causing", "reason", "reasons", "fix", "fixes", "fixed",
+    "pump", "pumps", "press", "presses", "motor", "motors",
+    "alarm", "alarms", "code", "codes",
+    "loto", "tag", "tags", "tagged",
+    "ago", "since", "when", "today", "yesterday",
+    "low", "high", "hot", "cold", "warm",
+    "ok", "okay", "yes", "no",
 }
 
 
@@ -226,8 +252,14 @@ class QueryCorrector:
 
             matches = get_close_matches(lower, self.vocab_list, n=1, cutoff=0.8)
             if matches and matches[0] != lower and lower not in self.protected_words:
-                corrected.append(matches[0])
-                fixes.append(f"spelling: '{word}' → '{matches[0]}'")
+                candidate = matches[0]
+                # Don't "correct" a real word into a much shorter acronym (e.g.
+                # fail → fai). Only allow shortening to candidates of length ≥ 5.
+                if len(candidate) < len(lower) and len(candidate) < 5:
+                    corrected.append(word)
+                else:
+                    corrected.append(candidate)
+                    fixes.append(f"spelling: '{word}' → '{candidate}'")
             else:
                 corrected.append(word)
 

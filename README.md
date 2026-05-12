@@ -1,16 +1,39 @@
-# Hybrid GraphRAG — Manufacturing Diagnostic Copilot
+# Manufacturing Hybrid GraphRAG — Unified Diagnostic Pipeline
 
-An **evidence-grounded** diagnostic and troubleshooting copilot for manufacturing equipment.
-It combines **BM25 (sparse)**, **dense vector search**, and a **domain knowledge graph** with a
-**critic-guided self-correction loop** to deliver auditable answers about pumps, conveyors,
-hydraulic presses, PLCs, alarms, and spare parts — with full source citations.
+An **evidence-grounded** retrieval-augmented diagnostic copilot for manufacturing operations. The
+project merges two previously parallel systems into a **single end-to-end pipeline application**:
 
-The project ships with a Streamlit UI that lets you ask questions and **compare** three pipelines
-side-by-side:
+- **`doc_pipeline/`** — high-quality PDF/TXT/Excel ingestion, smart hybrid chunking, sentence-transformer
+  embeddings on FAISS, a **Clarifier Agent** (intent / entity / slot filling) and a manufacturing
+  **Query Corrector** (spelling, acronyms, domain synonyms).
+- **`core/` + `comparison/`** — NetworkX **knowledge graph**, **BM25 + Vector + Graph** hybrid
+  retrieval with **Reciprocal Rank Fusion**, an **LLM orchestrator** with a **critic-driven
+  self-correction loop**, and Direct-LLM / Classical-RAG **baselines** for benchmarking.
 
-1. **Direct LLM** – no retrieval, no grounding (baseline)
-2. **Classical RAG** – vector-only retrieval
-3. **Hybrid GraphRAG** – BM25 + Vector + Graph + Critic loop (this project)
+Both layers are wired together by a **`pipeline/`** package that exposes a single
+`ManufacturingPipeline` class plus a **conversational `ChatAgent`** (multi-turn slot-filling on top
+of the clarifier). The application now ships three UI/API surfaces:
+
+- **`app.py`** — unified Streamlit UI (6 tabs, including a ChatGPT-style chat tab)
+- **`api/server.py`** — FastAPI backend exposing `/api/chat`, `/api/health`, `/api/stats`, `/api/reset`
+- **`web/`** — Next.js 14 (App Router · TypeScript · Tailwind) **Claude-style chat UI** that calls
+  the FastAPI backend
+- **`main.py`** — CLI entry point
+
+A single `./run.sh` brings up all three services in the background; `./stop.sh` tears them down.
+
+The application supports four operating modes:
+
+| Mode                  | Retrieval                    | LLM required | Critic |
+| --------------------- | ---------------------------- | ------------ | ------ |
+| **Quick Search**      | FAISS only (Clarifier-aware) | No           | No     |
+| **Diagnostic Copilot**| BM25 + FAISS + Graph + RRF   | Yes          | Yes    |
+| **Classical RAG**     | FAISS only                   | Yes          | No     |
+| **Direct LLM**        | _none (baseline)_            | Yes          | No     |
+
+Every UI surface (Streamlit chat tab, Next.js chat page, FastAPI `/api/chat`) drives the
+**`ChatAgent`**, which auto-corrects domain jargon, asks targeted follow-up questions when required
+slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the LLM-free fallback).
 
 ---
 
@@ -19,50 +42,82 @@ side-by-side:
 1. [Key Features](#key-features)
 2. [Tech Stack](#tech-stack)
 3. [High-Level Architecture](#high-level-architecture)
-4. [Low-Level / Component Architecture](#low-level--component-architecture)
+4. [Unified Component Architecture](#unified-component-architecture)
 5. [End-to-End Activity Flow](#end-to-end-activity-flow)
 6. [Pipeline Sequence Diagram](#pipeline-sequence-diagram)
 7. [Knowledge Graph Schema](#knowledge-graph-schema)
 8. [Retrieval Fusion Internals](#retrieval-fusion-internals)
-9. [Critic Loop State Machine](#critic-loop-state-machine)
-10. [Directory Structure](#directory-structure)
-11. [Setup & Installation](#setup--installation)
-12. [Running the Application](#running-the-application)
-13. [Configuration](#configuration)
-14. [Sample Queries](#sample-queries)
-15. [Pipeline Comparison](#pipeline-comparison)
-16. [Troubleshooting](#troubleshooting)
+9. [Clarifier Agent & Query Correction](#clarifier-agent--query-correction)
+10. [Conversational Chat & Deployment](#conversational-chat--deployment)
+11. [Critic Loop State Machine](#critic-loop-state-machine)
+12. [Directory Structure](#directory-structure)
+13. [Setup & Installation](#setup--installation)
+14. [Running the Application](#running-the-application)
+15. [Configuration](#configuration)
+16. [Sample Queries](#sample-queries)
+17. [Pipeline Comparison](#pipeline-comparison)
+18. [Troubleshooting](#troubleshooting)
+19. [What Changed in the Unification](#what-changed-in-the-unification)
 
 ---
 
 ## Key Features
 
-- **Three-way hybrid retrieval** — BM25 lexical + dense vectors (ChromaDB) + graph traversal
-- **Domain knowledge graph** — Equipment, Components, Alarms, Symptoms, FailureModes, Procedures, SpareParts
-- **Graph-scoped allow-list** — prunes candidate chunks to entities reachable in the KG
-- **Reciprocal Rank Fusion (RRF)** with **edge-prior boosting**
-- **Query understanding** — intent classification, entity extraction, abbreviation expansion (PLC, VFD, HMI, MTBF…)
-- **Critic-driven self-correction** — LLM critic verifies grounding; rejected answers are regenerated (up to `MAX_CRITIC_RETRIES`)
-- **Side-by-side benchmarking** UI vs Direct LLM and Classical RAG
-- **Cost & ROI projection** dashboard
-- **Full provenance** — every claim cited as `[source, chunk_id]`
+- **One pipeline, many modes** — `ManufacturingPipeline` orchestrates ingestion, indexing, and four
+  query strategies (Quick Search / Diagnostic / Classical RAG / Direct LLM) from a single object.
+- **Conversational ChatGPT-style UX** — `ChatAgent` adds multi-turn slot filling on top of the
+  Clarifier: it auto-corrects domain jargon, asks **one targeted follow-up question at a time** when
+  required entities (equipment, metric, time period) are missing, then runs the full pipeline.
+  Available in the Streamlit Chat tab, the Next.js Claude-style web UI, and via `/api/chat`.
+- **Claude-style Next.js front-end** — `web/` ships a Next.js 14 + Tailwind UI (cream/copper palette,
+  message bubbles, markdown answers, inline auto-correction notes, expandable evidence + KG panels).
+- **FastAPI backend** — `api/server.py` exposes the chat agent over JSON HTTP with per-session
+  memory and CORS, ready for any front-end or programmatic integration.
+- **One-command stack** — `./run.sh` boots FastAPI + Streamlit + Next.js in the background and
+  writes PIDs/logs to `.run/`. `./stop.sh` tears everything down cleanly.
+- **PDF / TXT / Excel ingestion** — `pdfplumber` + `openpyxl`, table-aware, page/section/sheet
+  metadata preserved.
+- **Smart hybrid chunking** — semantic boundaries for narrative PDFs, recursive section-aware for
+  SOPs, sliding window for tabular Excel.
+- **FAISS-backed vector store** — IVF index above 100 chunks, flat index below. Persisted to disk;
+  reloaded in seconds on subsequent runs. (ChromaDB still supported when installed.)
+- **Clarifier Agent** — rule-based **intent classifier** (10 intents) + **entity extractor**
+  (equipment IDs, parts, suppliers, metrics, plants, standards, dates, materials, severities) +
+  **slot filling** with auto-generated clarification prompts.
+- **Query corrector** — manufacturing-domain spell correction, acronym expansion (OEE, MTBF, CAPA,
+  LOTO, PPM, Cpk, TRIR, …), synonym enrichment.
+- **Hybrid retrieval** — BM25 (sparse, pure-Python fallback) + FAISS (dense) + Knowledge Graph
+  (entity-driven scoring) fused via **Reciprocal Rank Fusion** with **edge-prior boosting**.
+- **Knowledge graph** — NetworkX DiGraph built from chunk metadata (Equipment, Components, Alarms,
+  Symptoms, FailureModes, Procedures, SpareParts, Specifications).
+- **Tiered LLM routing** — strong cloud model for user-facing answers (`ANSWER_MODEL=gpt-4o`),
+  cheap local model for critic / classification (`CRITIC_MODEL=qwen2.5:3b` via Ollama), configurable
+  via `.env`.
+- **Critic-driven self-correction** — LLM critic verifies grounding; rejected answers are
+  regenerated with feedback up to `MAX_CRITIC_RETRIES`.
+- **Side-by-side benchmarking** — Direct LLM vs Classical RAG vs Hybrid GraphRAG with latency,
+  tokens, cost, citations, and critic verdicts.
+- **Run-out-of-the-box** — sample documents and a prebuilt FAISS index ship in the repo.
 
 ---
 
 ## Tech Stack
 
-| Layer            | Technology                                                  |
-| ---------------- | ----------------------------------------------------------- |
-| UI               | Streamlit + Plotly                                          |
-| LLM              | OpenAI (`gpt-4o-mini` by default, configurable)             |
-| Vector store     | ChromaDB (HNSW, cosine)                                     |
-| Sparse retrieval | `rank-bm25`                                                 |
-| Knowledge graph  | NetworkX (DiGraph)                                          |
-| Embeddings       | Sentence-Transformers (`all-MiniLM-L6-v2`) via Chroma       |
-| Data ingestion   | Pandas, openpyxl, pdfplumber                                |
-| Language         | Python 3.10+                                                |
+| Layer              | Technology                                                       |
+| ------------------ | ---------------------------------------------------------------- |
+| Web UI (primary)   | **Next.js 14** (App Router, TypeScript) + **Tailwind CSS** + `react-markdown` |
+| Analytics UI       | Streamlit + Plotly (6 tabs)                                      |
+| HTTP API           | **FastAPI** + **uvicorn** + Pydantic                             |
+| LLM                | OpenAI (`gpt-4o`, `gpt-4o-mini`) + Ollama (`qwen2.5:3b`)         |
+| Vector store       | FAISS (default) — ChromaDB optional                              |
+| Sparse retrieval   | `rank-bm25` _(pure-Python fallback bundled in-tree)_             |
+| Knowledge graph    | NetworkX (DiGraph)                                               |
+| Embeddings         | Sentence-Transformers (`all-MiniLM-L6-v2`)                       |
+| Data ingestion     | `pdfplumber`, `openpyxl`, `pandas`                               |
+| Orchestration      | `run.sh` / `stop.sh` / `status.sh` (PID + log management in `.run/`) |
+| Language           | Python 3.10+, Node.js 18+                                        |
 
-See `requirements.txt` for exact versions.
+See `requirements.txt` (Python) and `web/package.json` (Node) for exact versions.
 
 ---
 
@@ -71,112 +126,189 @@ See `requirements.txt` for exact versions.
 ```mermaid
 flowchart LR
     subgraph SOURCES["Data Sources"]
-        PDF["PDFs / Manuals<br/>(data/pdfs)"]
-        XL["Excel<br/>(work orders, alarms,<br/>spare parts)"]
+        IDOC["doc_pipeline/input_docs/<br/>(PDFs, TXT, Excel)"]
+        DATA["data/pdfs · data/excel<br/>(auxiliary corpora)"]
     end
 
-    subgraph INGEST["Ingestion & Indexing"]
-        DP["Document Processor<br/>(chunk + metadata)"]
-        KGB["Knowledge Graph Builder<br/>(NetworkX)"]
-        BM["BM25 Index"]
-        VEC["Vector Index<br/>(ChromaDB)"]
+    subgraph INGEST["Ingestion (doc_pipeline/)"]
+        PARS["PDF / TXT / Excel parsers<br/>(pdfplumber, openpyxl)"]
+        CHK["HybridChunker<br/>(semantic / recursive / sliding)"]
     end
 
-    subgraph RUNTIME["Query Runtime"]
-        QF["Query Formatter<br/>(intent + entities)"]
-        HR["Hybrid Retriever<br/>(BM25 + Vec + Graph)"]
-        ORCH["Orchestrator"]
-        LLM["LLM<br/>(answer generator)"]
-        CRIT["Critic<br/>(grounding check)"]
+    subgraph INDEX["Indexing & Bridge (pipeline/ + core/)"]
+        EMB["FAISS Embeddings<br/>(sentence-transformers)"]
+        ADP["Adapter<br/>Chunk → core dict<br/>+ entity metadata"]
+        BM["BM25 index<br/>(pure-Python fallback)"]
+        KG["Knowledge Graph<br/>(NetworkX)"]
     end
 
-    subgraph UI["Streamlit UI"]
-        QC["Query & Compare"]
-        PF["Pipeline Flow"]
-        KGV["KG Explorer"]
-        CA["Cost Analysis"]
-        BENCH["Benchmark"]
+    subgraph QUERY["Query Understanding"]
+        CL["ClarifierAgent<br/>intent · entities · slots"]
+        QC["QueryCorrector<br/>spelling · acronyms · synonyms"]
+        QFMT["query_formatter<br/>(legacy, used by orchestrator)"]
     end
 
-    PDF --> DP
-    XL --> DP
-    DP --> KGB
-    DP --> BM
-    DP --> VEC
+    subgraph RETR["Hybrid Retrieval (core/retrieval/)"]
+        HR["HybridRetriever<br/>RRF + edge priors"]
+    end
 
-    UI -->|user query| ORCH
-    ORCH --> QF --> HR
-    KGB -.allow-list.-> HR
-    BM -.results.-> HR
-    VEC -.results.-> HR
-    HR -->|evidence| LLM --> CRIT
-    CRIT -- FAIL --> LLM
-    CRIT -- PASS --> UI
+    subgraph LLMSTACK["LLM Layer (core/)"]
+        ANS["LLM answer<br/>(ANSWER_MODEL)"]
+        CRT["Critic<br/>(CRITIC_MODEL)"]
+        RET["Retry<br/>(RETRY_MODEL)"]
+    end
+
+    subgraph APPS["Entry Points"]
+        UI["app.py<br/>(Streamlit, 5 tabs)"]
+        CLI["main.py<br/>(CLI)"]
+        PIPE["pipeline.ManufacturingPipeline"]
+    end
+
+    IDOC --> PARS
+    DATA --> PARS
+    PARS --> CHK --> EMB
+    CHK --> ADP --> BM
+    ADP --> KG
+
+    UI --> PIPE
+    CLI --> PIPE
+    PIPE --> CL
+    PIPE --> QC
+
+    CL & QC --> QFMT --> HR
+    BM & EMB & KG --> HR
+    HR --> ANS --> CRT
+    CRT -- FAIL --> RET --> CRT
+    CRT -- PASS --> UI
+```
+
+The dashed lines below show how artefacts persist between runs:
+
+```mermaid
+flowchart TB
+    INIT([First launch]) --> BUILD[Build FAISS + KG]
+    BUILD --> SAVE[Write artefacts to disk]
+    SAVE -->|doc_pipeline/vector_store/| FAISS["manufacturing_index.faiss<br/>_embeddings.npy<br/>_chunks.json"]
+    SAVE -->|data/processed/| KGJSON[knowledge_graph.json]
+    NEXT([Next launch]) --> LOAD[Load artefacts] --> READY([Pipeline ready])
+    FAISS -.-> LOAD
+    KGJSON -.-> LOAD
 ```
 
 ---
 
-## Low-Level / Component Architecture
+## Unified Component Architecture
 
 ```mermaid
 flowchart TB
-    subgraph CFG["config.py"]
-        OPT["CHUNK_SIZE=512, OVERLAP=64<br/>TOP_K_RETRIEVAL=10, RERANK=5<br/>RRF_K=60, MAX_CRITIC_RETRIES=2<br/>DOMAIN_ONTOLOGY"]
+    subgraph CFG["config.py (root)"]
+        OPT["INPUT_DOCS_DIR, VECTOR_STORE_DIR<br/>EMBEDDING_MODEL, ANSWER_MODEL,<br/>CRITIC_MODEL, RETRY_MODEL,<br/>OLLAMA_BASE_URL, TOP_K_*, RRF_K,<br/>MAX_CRITIC_RETRIES, DOMAIN_ONTOLOGY"]
+    end
+
+    subgraph DOCP["doc_pipeline/"]
+        DI["document_ingestion.py<br/>PDFParser · TXTParser · ExcelParser<br/>DocType enum"]
+        CH["chunking.py<br/>SemanticChunker · RecursiveChunker<br/>SlidingWindowChunker · HybridChunker"]
+        EMB["embeddings.py<br/>EmbeddingPipeline (FAISS)"]
+        CA["clarifier_agent.py<br/>IntentClassifier · EntityExtractor<br/>SlotFiller · ClarifierAgent"]
+        QC["query_correction.py<br/>QueryCorrector (spell + acronym + synonym)"]
+        RE["rag_engine.py<br/>RAGEngine + QueryResponse<br/>(standalone façade)"]
+        CSD["create_sample_docs.py<br/>+ input_docs/ (7 demo files)"]
+    end
+
+    subgraph PIPE["pipeline/ (NEW — unification layer)"]
+        ADP["adapter.py<br/>chunks_to_core_docs()<br/>extracts equipment_ids,<br/>alarm_codes, part_numbers,<br/>fault_codes from text"]
+        FVR["faiss_retriever.py<br/>FaissVectorRetriever<br/>(API-compatible with core)"]
+        UP["unified_pipeline.py<br/>ManufacturingPipeline<br/>build_or_load() + 4 query modes"]
     end
 
     subgraph CORE["core/"]
-        DOC["document_processor.py<br/>• chunk_text()<br/>• extract_section_metadata()<br/>• process_text_file()<br/>• process_excel_file()"]
-        KG["knowledge_graph.py<br/>• build_from_documents()<br/>• get_allow_list()<br/>• get_subgraph_for_query()<br/>• get_edge_priors()"]
-        QFMT["query_formatter.py<br/>• _normalize_text()<br/>• _expand_abbreviations()<br/>• _extract_entities()<br/>• _classify_intent()<br/>• _build_structured_query()"]
-        ORC["orchestrator.py<br/>Orchestrator.process_query()"]
+        KG["knowledge_graph.py<br/>build · query · persist (JSON)"]
+        QFMT["query_formatter.py<br/>intent + entity + abbreviations"]
+        ORC["orchestrator.py<br/>process_query() w/ injected retriever"]
         CRT["critic.py<br/>critic_evaluate()"]
-        LLMC["llm_client.py<br/>call_llm()<br/>call_llm_with_metrics()"]
+        LLMC["llm_client.py<br/>OpenAI + Ollama tiered routing"]
     end
 
-    subgraph RET["core/retrieval/"]
-        BMR["bm25_retriever.py<br/>BM25Okapi"]
-        VR["vector_retriever.py<br/>chromadb client"]
+    subgraph RETSUB["core/retrieval/"]
+        BMR["bm25_retriever.py<br/>BM25Okapi (rank_bm25 OR fallback)"]
+        VR["vector_retriever.py<br/>(ChromaDB — optional)"]
         GR["graph_retriever.py<br/>entity-based scoring"]
-        HRY["hybrid_retriever.py<br/>RRF + edge priors"]
+        HRY["hybrid_retriever.py<br/>RRF + edge priors<br/>(accepts injected vector retriever)"]
     end
 
     subgraph CMP["comparison/"]
         DL["direct_llm.py"]
-        CR["classical_rag.py"]
-        BN["benchmark.py<br/>SAMPLE_QUERIES"]
+        CR["classical_rag.py<br/>(uses injected retriever)"]
+        BN["benchmark.py<br/>SAMPLE_QUERIES + runner"]
     end
 
     subgraph U["utils/"]
-        MT["metrics.py<br/>format_latency()<br/>compute_cost_projection()"]
+        MT["metrics.py<br/>format_*  ·  compute_cost_projection"]
     end
 
-    APP["app.py<br/>(Streamlit entry point)"]
+    APP["app.py (Streamlit)<br/>5 tabs"]
+    CLI2["main.py (CLI)<br/>--query / --diagnostic / --compare"]
+    DOCAPP["doc_pipeline/app.py<br/>(legacy, doc_pipeline-only)"]
 
-    APP --> ORC
-    APP --> CR
-    APP --> DL
-    APP --> BN
-    APP --> KG
+    APP --> UP
+    CLI2 --> UP
+
+    UP --> DI
+    UP --> CH
+    UP --> EMB
+    UP --> CA
+    UP --> QC
+    UP --> ADP
+    UP --> FVR
+    UP --> KG
+    UP --> ORC
+    UP --> CR
+    UP --> DL
+
+    ADP --> KG
+    FVR --> EMB
+    HRY --> BMR
+    HRY --> FVR
+    HRY --> VR
+    HRY --> GR
+    GR --> KG
 
     ORC --> QFMT
     ORC --> HRY
     ORC --> CRT
     ORC --> LLMC
+    CR --> FVR
+    CR --> LLMC
+    DL --> LLMC
 
-    HRY --> BMR
-    HRY --> VR
-    HRY --> GR
-    GR --> KG
+    DOCAPP --> RE
+    RE --> DI
+    RE --> CH
+    RE --> EMB
+    RE --> CA
+    RE --> QC
 
-    DOC --> KG
-    BN --> ORC
-    BN --> CR
-    BN --> DL
-
+    CFG -.consumed by.-> DOCP
+    CFG -.consumed by.-> PIPE
     CFG -.consumed by.-> CORE
-    CFG -.consumed by.-> RET
+    CFG -.consumed by.-> RETSUB
+    CFG -.consumed by.-> CMP
     APP --> MT
 ```
+
+Highlights of the new layer:
+
+- **`pipeline.adapter.chunks_to_core_docs`** is the bridge. It takes `doc_pipeline.chunking.Chunk`
+  objects (the output of the smart chunker) and emits the `{chunk_id, text, metadata}` dicts the
+  core retrievers and KG builder expect. Along the way it auto-extracts entity references
+  (`equipment_ids`, `alarm_codes`, `part_numbers`, `fault_codes`) directly from the chunk text so
+  the KG nodes/edges materialise without re-parsing.
+- **`pipeline.faiss_retriever.FaissVectorRetriever`** is a drop-in replacement for the ChromaDB
+  retriever; it reuses the embedding pipeline so the FAISS index is built **once** and shared by
+  the orchestrator and the Classical RAG baseline.
+- **`pipeline.unified_pipeline.ManufacturingPipeline`** wires everything in `build_or_load()`:
+  ingest → chunk → embed (FAISS) → adapter → KG → BM25 → orchestrator/critic. Subsequent runs
+  load the FAISS index and KG from disk and skip the heavy work.
 
 ---
 
@@ -184,101 +316,120 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    A([User opens Streamlit app]) --> B{Processed<br/>artifacts<br/>exist?}
-    B -- No --> C[Run document_processor<br/>chunk PDFs + Excel rows]
-    C --> D[Save all_chunks.json]
-    D --> E[Build Knowledge Graph<br/>extract entities + relations]
-    E --> F[Persist knowledge_graph.gpickle]
-    B -- Yes --> F
-    F --> G[Build BM25 index]
-    G --> H[Build Vector index<br/>ChromaDB collection]
-    H --> I([System Ready])
+    A([User launches app.py / main.py]) --> B{FAISS index<br/>on disk?}
+    B -- Yes --> L1[Load FAISS index + chunks]
+    B -- No  --> P1[Parse PDFs / TXT / Excel] --> P2[HybridChunker]
+    P2 --> P3[Encode + build FAISS index] --> P4[Persist index]
+    L1 --> ADP[Adapter: chunks → core dicts<br/>+ extract entities]
+    P4 --> ADP
+    ADP --> KG{KG file<br/>on disk?}
+    KG -- Yes --> KL[Load knowledge_graph.json]
+    KG -- No  --> KB[Build NetworkX graph<br/>from chunk metadata]
+    KL --> BM[Build BM25 (in-memory)]
+    KB --> BM
+    BM --> RDY([Pipeline ready])
 
-    I --> J[User enters query]
-    J --> K[Query Formatter<br/>intent + entities + expansion]
-    K --> L[KG: build allow-list<br/>1-hop + 2-hop chunks]
-    L --> M[BM25 retrieve top-10]
-    L --> N[Vector retrieve top-10]
-    L --> O[Graph score by entity]
-    M & N & O --> P[Reciprocal Rank Fusion]
-    P --> Q[Apply edge-prior boost]
-    Q --> R[Top-K rerank → 5 evidence chunks]
-    R --> S[LLM generates answer<br/>with citations]
-    S --> T[Critic evaluates grounding]
-    T -->|PASS| U[Return answer + evidence<br/>+ graph context + metrics]
-    T -->|FAIL & retries left| V[Re-prompt LLM with<br/>critic feedback]
-    V --> T
-    T -->|FAIL & exhausted| U
-    U --> W([Render answer,<br/>evidence, graph, metrics])
+    RDY --> Q[User submits query]
+    Q --> CLAR[ClarifierAgent<br/>intent + entities + slots]
+    Q --> CORR[QueryCorrector<br/>spell + acronym + synonyms]
+    CLAR & CORR --> MODE{Mode?}
+
+    MODE -- Quick Search --> FQ[FAISS search<br/>+ context window]
+    FQ --> REND1([Render results + clarifier panel])
+
+    MODE -- Diagnostic --> OQ[Orchestrator.process_query]
+    OQ --> ALLOW[KG allow-list<br/>1-hop + 2-hop chunks]
+    ALLOW --> PAR{{Parallel retrieval}}
+    PAR --> B1[BM25 top-10] & V1[FAISS top-10] & G1[Graph top-10]
+    B1 & V1 & G1 --> RRF[Reciprocal Rank Fusion]
+    RRF --> EP[Edge-prior boost]
+    EP --> EV[Top-5 evidence]
+    EV --> LLM[LLM answer (ANSWER_MODEL)]
+    LLM --> CRT[Critic (CRITIC_MODEL)]
+    CRT -- PASS --> REND2([Answer + citations + KG view + metrics])
+    CRT -- FAIL & retries left --> RETRY[Retry LLM (RETRY_MODEL)<br/>with critic feedback] --> CRT
+    CRT -- FAIL & exhausted --> REND2
+
+    MODE -- Classical RAG --> CRP[FAISS top-5 → LLM] --> REND2
+    MODE -- Direct LLM    --> DLP[LLM only, no retrieval] --> REND2
 ```
 
 ---
 
 ## Pipeline Sequence Diagram
 
+The Diagnostic Copilot mode end-to-end:
+
 ```mermaid
 sequenceDiagram
     actor User
-    participant UI as Streamlit UI
+    participant UI as Streamlit UI / CLI
+    participant MP as ManufacturingPipeline
+    participant CA as ClarifierAgent
+    participant QC as QueryCorrector
     participant Orc as Orchestrator
     participant QF as QueryFormatter
     participant KG as KnowledgeGraph
     participant BM25 as BM25Retriever
-    participant VEC as VectorRetriever
+    participant FAISS as FaissVectorRetriever
     participant GR as GraphRetriever
-    participant HR as HybridRetriever (RRF)
-    participant LLM as OpenAI LLM
-    participant Crit as Critic
+    participant HR as HybridRetriever
+    participant LLM as LLM (ANSWER/RETRY)
+    participant Crit as Critic (CRITIC_MODEL)
 
     User->>UI: Submit query
-    UI->>Orc: process_query(raw_query)
-    Orc->>QF: format_query(raw_query)
-    QF-->>Orc: {intent, entities, expanded, structured_query}
+    UI->>MP: diagnostic(query)
+    MP->>CA: analyze(query)
+    CA-->>MP: intent + entities + slots
+    MP->>QC: correct(query)
+    QC-->>MP: corrected + expanded
+    MP->>Orc: process_query(enriched)
+    Orc->>QF: format_query(query)
+    QF-->>Orc: {intent, entities, structured_query}
 
-    Orc->>HR: retrieve(structured_query, top_k=5)
+    Orc->>HR: retrieve(structured_query)
     HR->>GR: get_allow_list(query)
-    GR->>KG: _match_query_to_entities + neighbors
+    GR->>KG: match entities + 2-hop neighbours
     KG-->>GR: allow_list (chunk_ids)
     GR-->>HR: allow_list
 
-    par Parallel retrieval
-        HR->>BM25: retrieve(top_k=10, allow_list)
-        HR->>VEC: retrieve(top_k=10, allow_list)
-        HR->>GR: retrieve_by_entity(top_k=10)
+    par
+        HR->>BM25: retrieve(top-10, allow_list)
+        HR->>FAISS: retrieve(top-10, allow_list)
+        HR->>GR: retrieve_by_entity(top-10)
     end
-    BM25-->>HR: ranked chunks
-    VEC-->>HR: ranked chunks
-    GR-->>HR: ranked chunks
+    BM25-->>HR: ranked
+    FAISS-->>HR: ranked
+    GR-->>HR: ranked
 
-    HR->>HR: Reciprocal Rank Fusion (RRF_K=60)
-    HR->>KG: get_edge_priors(chunk_ids)
-    KG-->>HR: prior boosts
-    HR-->>Orc: top-5 evidence chunks
+    HR->>HR: RRF + edge-prior boost
+    HR-->>Orc: top-5 evidence
 
     Orc->>LLM: ANSWER_PROMPT + evidence
     LLM-->>Orc: draft answer
 
-    loop up to MAX_CRITIC_RETRIES
-        Orc->>Crit: critic_evaluate(query, answer, evidence)
+    loop ≤ MAX_CRITIC_RETRIES
+        Orc->>Crit: critic_evaluate
         Crit->>LLM: CRITIC_PROMPT
-        LLM-->>Crit: VERDICT/CONFIDENCE/ISSUES
+        LLM-->>Crit: VERDICT / CONFIDENCE / ISSUES
         Crit-->>Orc: verdict
-        alt verdict == PASS
-            Orc->>UI: result (answer, evidence, graph, metrics)
-        else verdict == FAIL & retries left
-            Orc->>LLM: RETRY_PROMPT + critic feedback
+        alt PASS
+            Orc-->>MP: result
+        else FAIL & retries left
+            Orc->>LLM: RETRY_PROMPT (with feedback)
             LLM-->>Orc: revised answer
         end
     end
-    UI-->>User: Rendered answer + citations + graph + metrics
+    MP-->>UI: PipelineResult
+    UI-->>User: Answer + citations + KG + metrics
 ```
 
 ---
 
 ## Knowledge Graph Schema
 
-The KG ontology is defined in `config.py → DOMAIN_ONTOLOGY` and built dynamically by
-`core/knowledge_graph.py`.
+The KG ontology is defined in `config.py → DOMAIN_ONTOLOGY` and built by
+`core/knowledge_graph.py` from chunk metadata produced by `pipeline/adapter.py`.
 
 ### Entity Types
 
@@ -312,15 +463,17 @@ erDiagram
 | `alarm_to_procedure`  | `Alarm → Equipment → FailureMode → Procedure`       |
 | `equipment_to_parts`  | `Equipment → Component → SparePart`                 |
 
-### ID Patterns recognised in text
+### ID Patterns Recognised in Text
 
-| Type          | Regex                                  | Example           |
-| ------------- | -------------------------------------- | ----------------- |
-| Equipment     | `P-\d{3}`, `CV-\d{3}`, `HP-\d{3}`      | `P-203`, `CV-301` |
-| Alarm         | `ALM-[A-Z]\d{3}`                       | `ALM-P001`        |
-| Spare part    | `SP-\d{4}`                             | `SP-1042`         |
-| Fault code    | `FC-\d{3}`                             | `FC-003`          |
-| Work order    | `WO-\d{4}-\d{3}`                       | `WO-2024-117`     |
+The adapter and KG entity matcher now recognise both the legacy and the doc_pipeline schemas:
+
+| Type          | Regex                                                                                                                | Example                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Equipment     | `P-\d{3}`, `CV-\d{3}`, `HP-\d{3}`, `CNC-[A-Z]-\d{3}`, `STAMP-[A-Z]-\d{3}`, `WELD-[A-Z]-\d{3}`, `HT-[A-Z]-\d{3}`, `COAT-[A-Z]-\d{3}` | `P-203`, `CNC-A-004`   |
+| Alarm         | `ALM-[A-Z]\d{3}`                                                                                                     | `ALM-P001`             |
+| Part / spare  | `SP-\d{4}`, `TH-\d{4}`, `BRK-\d{4}`, `SFT-\d{4}`, `HSG-\d{4}`, `GR-\d{4}`                                            | `SP-1042`, `TH-4401`   |
+| Fault code    | `FC-\d{3}`                                                                                                           | `FC-003`               |
+| Work order    | `WO-\d{4}-\d{3}`                                                                                                     | `WO-2024-117`          |
 
 ---
 
@@ -331,7 +484,7 @@ flowchart LR
     Q[Structured Query] --> AL[Graph Allow-List<br/>1-hop + 2-hop chunk_ids]
 
     AL --> B[BM25Retriever<br/>top-10]
-    AL --> V[VectorRetriever<br/>ChromaDB top-10]
+    AL --> V[FaissVectorRetriever<br/>top-10]
     Q  --> G[GraphRetriever<br/>entity score top-10]
 
     B --> RRF["RRF score =<br/>Σ 1 / (RRF_K + rank + 1)"]
@@ -346,13 +499,179 @@ flowchart LR
 
 **Reciprocal Rank Fusion** (see `core/retrieval/hybrid_retriever.py`):
 
-```python
+```
 rrf_score(c) = Σ over retrievers   1 / (RRF_K + rank(c, retriever) + 1)
 ```
 
-After fusion, each chunk receives an additive boost proportional to the average prior of
-graph edges touching that chunk — encoding "this relationship has been seen many times in
-the corpus, so trust it more".
+After fusion each chunk receives an additive boost proportional to the average prior of graph edges
+touching that chunk — encoding _"this relationship has been seen many times in the corpus, so trust
+it more"_.
+
+---
+
+## Clarifier Agent & Query Correction
+
+Two new front-end layers sit between the user's raw query and the retriever stack:
+
+### `doc_pipeline/clarifier_agent.py`
+
+```mermaid
+flowchart LR
+    Q[Raw query] --> IC[IntentClassifier<br/>regex patterns + scores]
+    Q --> EE[EntityExtractor<br/>equipment, parts, suppliers,<br/>metrics, plants, standards,<br/>dates, materials, severities]
+    IC --> SF[SlotFiller<br/>intent-specific templates]
+    EE --> SF
+    SF --> R[ClarifierResult<br/>+ enriched_query<br/>+ clarification_prompt<br/>(if required slots missing)]
+```
+
+**Intents:** `lookup`, `comparison`, `troubleshooting`, `compliance`, `metric_query`, `procedure`,
+`trend`, `status`, `root_cause`, `unknown`.
+
+When required slots are missing the agent emits a deterministic clarification prompt (e.g.
+_"Which metric would you like? (e.g., OEE, MTBF, scrap rate, CPK, PPM)"_), which the UI surfaces as
+a warning banner so the user can refine the query.
+
+### `doc_pipeline/query_correction.py`
+
+```mermaid
+flowchart LR
+    Q[Raw query] --> SP[Spell correction<br/>manufacturing dict + edit distance]
+    SP --> AE[Acronym expansion<br/>OEE, MTBF, MTTR, SPC, CAPA, …]
+    AE --> SE[Synonym enrichment<br/>quality → NCR, CAPA, defect, …]
+    SE --> R[CorrectedQuery<br/>original / corrected / expanded /<br/>corrections_applied / confidence]
+```
+
+The unified pipeline feeds the **enriched** query (entities annotated) to the retrievers, and
+preserves the corrections list so the UI can show the user what changed.
+
+> **Safety guard:** the spell corrector protects common English verbs/nouns used in troubleshooting
+> queries (`fail`, `break`, `stop`, `alarm`, `leak`, `jam`, …) and never substitutes a longer word
+> with a target shorter than 5 characters. This prevents misfires like `fail` → `FAI` (First Article
+> Inspection).
+
+---
+
+## Conversational Chat & Deployment
+
+The unified pipeline is fronted by three interchangeable surfaces, all driven by the same
+**`ChatAgent`** (in `pipeline/chat_agent.py`):
+
+```mermaid
+flowchart LR
+    subgraph CLIENTS["Clients"]
+        BROWSER1["Browser — Next.js<br/>(Claude-style chat)"]
+        BROWSER2["Browser — Streamlit<br/>(6-tab UI · 💬 Chat tab)"]
+        CURL["curl / programmatic clients"]
+    end
+
+    subgraph SERVERS["Servers (started by ./run.sh)"]
+        WEB[":3000 · Next.js dev<br/>web/app/page.tsx"]
+        STL[":8501 · Streamlit<br/>app.py"]
+        API[":8000 · FastAPI<br/>api/server.py"]
+    end
+
+    subgraph BRAIN["Shared brain"]
+        AGENT["ChatAgent<br/>(multi-turn slot filling)"]
+        PIPE["ManufacturingPipeline<br/>(quick / diagnostic / classical / direct)"]
+    end
+
+    BROWSER1 --> WEB --> API --> AGENT --> PIPE
+    BROWSER2 --> STL --> AGENT
+    CURL --> API
+```
+
+### ChatAgent — multi-turn slot filling
+
+`pipeline/chat_agent.py` wraps `ClarifierAgent` + `QueryCorrector` + `ManufacturingPipeline` with a
+small state machine per session:
+
+1. **Auto-correct.** Every user turn passes through `QueryCorrector`. Spelling fixes are surfaced as
+   an inline 🪄 _"I read that as…"_ note above the answer. Acronym expansions and synonym
+   enrichments stay in-band for retrieval but are not noisily shown to the user.
+2. **Analyse.** `ClarifierAgent.analyze()` extracts intent, entities, and required/optional slots.
+3. **Ask follow-ups.** If a **required** slot is missing the agent posts an `❓` clarifying question
+   (e.g. _"Which equipment or line? (e.g., CNC-A-004, CNC Line 4, Stamping Press #1)"_) and waits
+   for the next user turn. Replies are concatenated into an accumulated query and re-analysed.
+4. **One optional polish.** After all required slots are filled, the agent asks at most **one**
+   high-value optional slot (priority: `time_period` → `equipment` → `plant` → `department`).
+5. **Skip.** Replies of `skip`, `n/a`, `none`, `pass`, `-`, `idk`, … proceed without that slot.
+6. **Reset.** `/reset`, `/new`, `/clear`, or the **New chat** button clear the conversation.
+7. **Route.** When ready, the agent calls `pipe.diagnostic()` (LLM + critic) if `OPENAI_API_KEY`
+   is configured, otherwise `pipe.quick_search()` and synthesises a top-evidence summary.
+
+Each turn keeps full metadata: intent, entities, latency, tokens, cost, critic verdict, evidence
+chunks, and matched KG nodes — surfaced as chips and collapsible panels in both UIs.
+
+### FastAPI backend (`api/server.py`)
+
+| Method | Path                  | Purpose                                                |
+| ------ | --------------------- | ------------------------------------------------------ |
+| GET    | `/api/health`         | Liveness + LLM availability + pipeline-ready flag      |
+| GET    | `/api/stats`          | Document, vector, KG node/edge counts                  |
+| POST   | `/api/chat`           | `{session_id, message}` → updated transcript + state   |
+| POST   | `/api/reset`          | Clear a session's conversation                         |
+| GET    | `/api/sessions/{id}`  | Fetch the current transcript for a session             |
+| GET    | `/docs`               | OpenAPI / Swagger UI                                   |
+
+Sessions are kept in memory keyed by client-supplied `session_id` (the Next.js UI stores a UUID in
+`localStorage`). CORS is wide open for local development. All dataclasses (`Slot`,
+`ClarifierResult`, `PipelineResult`) are flattened to JSON-safe payloads in `api/serializers.py`.
+
+### Next.js Claude-style web UI (`web/`)
+
+```
+web/
+├── app/
+│   ├── layout.tsx          # cream background, Inter font
+│   ├── page.tsx            # main chat page (session, polling, optimistic UI)
+│   └── globals.css         # Claude-style typography + markdown styles
+├── components/
+│   ├── ChatMessage.tsx     # bubble + chips + evidence + graph panels
+│   ├── ChatComposer.tsx    # auto-growing textarea + send button
+│   └── Sidebar.tsx         # status, suggestions, stats
+├── lib/api.ts              # typed FastAPI client
+├── next.config.js          # /api/* rewrite → http://localhost:8000
+├── tailwind.config.ts      # cream + copper palette
+└── package.json            # Next 14 · React 18 · Tailwind 3
+```
+
+Highlights:
+
+- **Visual style** — warm cream background (`#fbfaf7`), copper accent (`#c25b3f`), serif headings,
+  pill-shaped suggestion chips, soft shadows.
+- **Per-bubble metadata** — intent badge, entity chips, latency, tokens, cost, critic verdict.
+- **Expandable panels** — 📎 evidence (source, page, sheet, score, snippet) and 🔗 knowledge graph
+  (node IDs + types) inline under the answer.
+- **Session memory** — `mfg-graphrag-session-id` stored in `localStorage` so refreshes keep history.
+- **Backend rewrite** — Next dev server proxies `/api/*` to `NEXT_PUBLIC_API_ORIGIN`
+  (default `http://localhost:8000`), so the frontend has no CORS or hard-coded URLs.
+
+### One-command stack: `run.sh` / `stop.sh` / `status.sh`
+
+```bash
+./run.sh        # boot api + streamlit + web in the background
+./status.sh     # 3-line health summary
+./stop.sh       # graceful TERM → KILL by PID, with port-based fallback sweep
+```
+
+What `run.sh` does:
+
+1. Picks `/opt/anaconda3/bin/python` if present, else `python3` (override via `PYTHON_BIN=`).
+2. Frees ports 8000 / 8501 / 3000 if any zombie listeners are present.
+3. Starts **`uvicorn api.server:app`** on `:8000`, waits for `/api/health` to return 200.
+4. Starts **`streamlit run app.py`** on `:8501`, waits for `/_stcore/health`.
+5. Runs **`npm install`** in `web/` on first invocation, then starts **`next dev`** on `:3000`.
+6. Writes PIDs to `.run/{api,streamlit,web}.pid` and logs to `.run/logs/<service>.log`.
+
+Useful overrides:
+
+```bash
+API_PORT=8001 STREAMLIT_PORT=8502 WEB_PORT=3001 ./run.sh
+SKIP_WEB=1 ./run.sh                       # API + Streamlit only
+SKIP_STREAMLIT=1 ./run.sh                 # API + Next.js only
+PYTHON_BIN=/path/to/venv/bin/python ./run.sh
+tail -f .run/logs/api.log                 # follow a service log
+```
 
 ---
 
@@ -360,17 +679,13 @@ the corpus, so trust it more".
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Drafted: LLM generates answer
-
-    Drafted --> Evaluating: critic_evaluate()
+    [*] --> Drafted: LLM generates answer (ANSWER_MODEL)
+    Drafted --> Evaluating: critic_evaluate() (CRITIC_MODEL)
     Evaluating --> Passed: verdict == PASS
     Evaluating --> Failed: verdict == FAIL
-
     Failed --> Retry: attempts < MAX_CRITIC_RETRIES
     Failed --> ReturnedWithIssues: attempts == MAX_CRITIC_RETRIES
-
-    Retry --> Drafted: RETRY_PROMPT with feedback
-
+    Retry --> Drafted: RETRY_PROMPT + feedback (RETRY_MODEL)
     Passed --> [*]
     ReturnedWithIssues --> [*]
 ```
@@ -398,39 +713,89 @@ SUGGESTION: <how to fix on retry>
 
 ```
 hybrid-graphrag-manufacturing/
-├── app.py                        # Streamlit entry point
-├── config.py                     # Central configuration + DOMAIN_ONTOLOGY
+├── run.sh                          # ★ start api + streamlit + web in background
+├── stop.sh                         # ★ stop all three services
+├── status.sh                       # ★ one-line health summary
+├── app.py                          # Streamlit entry point (6 tabs incl. 💬 Chat)
+├── main.py                         # CLI entry point
+├── config.py                       # Unified configuration + DOMAIN_ONTOLOGY
 ├── requirements.txt
-├── .env.example                  # Template for OPENAI_API_KEY
+├── .env.example                    # Template for OPENAI_API_KEY, model routing, etc.
 │
-├── core/                         # Core pipeline
-│   ├── document_processor.py     # Chunking + metadata extraction
-│   ├── knowledge_graph.py        # NetworkX KG (build / query / persist)
-│   ├── query_formatter.py        # Intent + entity + abbreviation expansion
-│   ├── orchestrator.py           # End-to-end pipeline driver
-│   ├── critic.py                 # LLM critic + verdict parser
-│   ├── llm_client.py             # OpenAI wrapper + cost accounting
+├── api/                            # ★ FastAPI backend (powers Next.js + any client)
+│   ├── __init__.py
+│   ├── server.py                   # FastAPI app — /api/{chat,health,stats,reset,sessions}
+│   └── serializers.py              # ChatTurn / Slot / ClarifierResult → JSON
+│
+├── web/                            # ★ Next.js 14 Claude-style chat UI
+│   ├── app/                        # App-router pages (page.tsx, layout.tsx, globals.css)
+│   ├── components/                 # ChatMessage, ChatComposer, Sidebar
+│   ├── lib/api.ts                  # typed FastAPI client
+│   ├── next.config.js              # /api/* → http://localhost:8000 rewrite
+│   ├── tailwind.config.ts          # cream + copper palette
+│   └── package.json                # Next 14 · React 18 · Tailwind 3
+│
+├── pipeline/                       # ★ Unification + chat layer
+│   ├── __init__.py                 # exports ManufacturingPipeline, ChatAgent, ChatState
+│   ├── adapter.py                  # Chunk → core dict + entity extraction
+│   ├── faiss_retriever.py          # FAISS-backed VectorRetriever (drop-in)
+│   ├── unified_pipeline.py         # ManufacturingPipeline orchestrator
+│   └── chat_agent.py               # ★ Multi-turn ChatAgent (slot-filling state machine)
+│
+├── doc_pipeline/                   # Document ingestion + clarifier
+│   ├── __init__.py                 # package marker + logger
+│   ├── app.py                      # standalone doc_pipeline-only Streamlit UI
+│   ├── main.py                     # standalone doc_pipeline CLI demo
+│   ├── config.py                   # proxies to root config (with fallback)
+│   ├── document_ingestion.py       # PDF / TXT / Excel parsers + DocType enum
+│   ├── chunking.py                 # Semantic / Recursive / Sliding / Hybrid chunkers
+│   ├── embeddings.py               # FAISS-backed EmbeddingPipeline
+│   ├── clarifier_agent.py          # Intent / Entity / Slot agent
+│   ├── query_correction.py         # Spell + acronym + synonym correction
+│   ├── rag_engine.py               # Standalone RAGEngine façade (uses doc_pipeline only)
+│   ├── create_sample_docs.py       # generators for the 7 demo files
+│   ├── input_docs/                 # ★ committed sample PDFs / TXT / Excel
+│   ├── vector_store/               # ★ committed prebuilt FAISS index
+│   └── output/                     # runtime outputs (gitignored)
+│
+├── core/                           # LLM / KG / retrieval layer
+│   ├── document_processor.py       # legacy chunker (kept for reference)
+│   ├── knowledge_graph.py          # NetworkX KG (build · query · persist as JSON)
+│   ├── query_formatter.py          # intent + entity + abbreviation expansion
+│   ├── orchestrator.py             # process_query() — accepts injected retriever
+│   ├── critic.py                   # LLM critic + verdict parser
+│   ├── llm_client.py               # OpenAI + Ollama (tiered routing)
 │   └── retrieval/
-│       ├── bm25_retriever.py     # Sparse lexical (rank-bm25)
-│       ├── vector_retriever.py   # Dense (ChromaDB)
-│       ├── graph_retriever.py    # Entity-driven graph scoring
-│       └── hybrid_retriever.py   # RRF + edge priors
+│       ├── bm25_retriever.py       # rank_bm25 OR pure-Python fallback
+│       ├── vector_retriever.py     # ChromaDB (optional — falls back to FAISS)
+│       ├── graph_retriever.py      # entity-driven scoring
+│       └── hybrid_retriever.py     # RRF + edge priors (accepts injected retriever)
 │
-├── comparison/                   # Baselines for benchmarking
-│   ├── direct_llm.py             # No retrieval baseline
-│   ├── classical_rag.py          # Vector-only RAG
-│   └── benchmark.py              # SAMPLE_QUERIES + comparison runner
+├── comparison/                     # Baselines for benchmarking
+│   ├── direct_llm.py               # No-retrieval baseline
+│   ├── classical_rag.py            # FAISS-only RAG (accepts injected retriever)
+│   └── benchmark.py                # SAMPLE_QUERIES + comparison runner
 │
 ├── utils/
-│   └── metrics.py                # Latency/cost formatting, projections
+│   └── metrics.py                  # Latency/cost formatting + projections
 │
-├── data/
-│   ├── pdfs/                     # Source manuals (.txt placeholders)
-│   ├── excel/                    # work_orders.xlsx, alarm_history.xlsx, …
-│   └── processed/                # all_chunks.json, knowledge_graph.gpickle
+├── data/                           # Auxiliary corpora picked up if present
+│   ├── pdfs/                       # Source manuals (.txt placeholders)
+│   ├── excel/                      # work_orders.xlsx, alarm_history.xlsx, …
+│   └── processed/                  # knowledge_graph.json (generated)
 │
-└── static/                       # (reserved for static assets)
+├── .run/                           # runtime PID + log dir (gitignored, created by run.sh)
+│   ├── api.pid · streamlit.pid · web.pid
+│   └── logs/
+│       ├── api.log
+│       ├── streamlit.log
+│       └── web.log
+│
+└── static/                         # (reserved for static assets)
 ```
+
+`★` = either committed to the repo so a fresh `git clone` runs the demo immediately, or newly added
+in the conversational chat / one-command-stack refresh.
 
 ---
 
@@ -438,14 +803,20 @@ hybrid-graphrag-manufacturing/
 
 ### Prerequisites
 
-- Python 3.10 or newer
-- macOS / Linux / WSL (Windows native should work but is not tested)
-- An OpenAI API key (optional — without it the app degrades but won't crash on indexing)
+- Python **3.10+**
+- **Node.js 18+** and **npm 9+** _(only required for the Next.js web UI; `./run.sh` will skip
+  it automatically if Node is missing, or set `SKIP_WEB=1`)_
+- macOS / Linux / WSL (Windows native works but is not tested)
+- _Optional_: an OpenAI API key (only needed for Diagnostic / Classical / Direct / Chat-with-LLM
+  modes; Quick Search and the chat agent in retrieval-only fallback run offline)
+- _Optional_: a local Ollama server with `qwen2.5:3b` pulled (for the cheap critic / classifier
+  tier). Without Ollama the routing falls back to the OpenAI key.
 
 ### 1. Clone & enter the project
 
 ```bash
-cd hybrid-graphrag-manufacturing
+git clone git@github.com:rajeshthokala10/AgenticAI_Manufacturing.git
+cd AgenticAI_Manufacturing
 ```
 
 ### 2. Create a virtual environment
@@ -462,134 +833,308 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
+> `chromadb` is commented out by default — FAISS is the canonical vector store. Uncomment it in
+> `requirements.txt` only if you want the legacy ChromaDB retriever.
+
+### 4. (Optional) Install the Next.js web UI
+
+Skip this if you only want the Streamlit demo. `./run.sh` will run this automatically on first
+launch, but you can do it eagerly:
+
+```bash
+cd web
+npm install
+cd ..
+```
+
+### 5. Configure environment variables
 
 ```bash
 cp .env.example .env
-# then edit .env and set OPENAI_API_KEY=sk-...
+# then edit .env
 ```
 
-`.env` keys:
+`.env` keys (all optional except `OPENAI_API_KEY` for LLM modes):
 
-| Key               | Default              | Purpose                              |
-| ----------------- | -------------------- | ------------------------------------ |
-| `OPENAI_API_KEY`  | _(empty)_            | Required for live answers + critic   |
-| `LLM_MODEL`       | `gpt-4o-mini`        | Any chat-completion compatible model |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2`   | Sentence-Transformers model name     |
+| Key                    | Default                       | Purpose                                              |
+| ---------------------- | ----------------------------- | ---------------------------------------------------- |
+| `OPENAI_API_KEY`       | _(empty)_                     | Required for live answers + critic                   |
+| `LLM_MODEL`            | `gpt-4o-mini`                 | Legacy single-model default                          |
+| `ANSWER_MODEL`         | `gpt-4o`                      | Strong cloud model for user-facing answers           |
+| `RETRY_MODEL`          | `gpt-4o`                      | Used when the critic rejects an answer               |
+| `CRITIC_MODEL`         | `qwen2.5:3b`                  | Cheap local model (Ollama) for grounding checks      |
+| `CLASSIFY_MODEL`       | `qwen2.5:3b`                  | Cheap local model for intent classification          |
+| `DIRECT_LLM_MODEL`     | `gpt-4o-mini`                 | Used by the Direct LLM baseline                      |
+| `CLASSICAL_RAG_MODEL`  | `gpt-4o-mini`                 | Used by the Classical RAG baseline                   |
+| `OLLAMA_BASE_URL`      | `http://localhost:11434/v1`   | Where the local Ollama server lives                  |
+| `EMBEDDING_MODEL`      | `all-MiniLM-L6-v2`            | Sentence-Transformers model name                     |
+| `TOP_K_RETRIEVAL`      | `10`                          | Candidates from each retriever                       |
+| `TOP_K_RERANK`         | `5`                           | Final evidence chunks shown to the LLM               |
+| `MAX_CRITIC_RETRIES`   | `2`                           | Max regeneration attempts after a failed critic check |
+| `NEXT_PUBLIC_API_ORIGIN` | `http://localhost:8000`     | Where the Next.js web UI sends `/api/*` requests     |
+| `API_PORT` / `STREAMLIT_PORT` / `WEB_PORT` | `8000` / `8501` / `3000` | Port overrides honoured by `run.sh` / `stop.sh` |
+| `SKIP_WEB` / `SKIP_STREAMLIT` | _(unset)_              | Set to `1` to skip a service when running `run.sh`   |
+| `PYTHON_BIN`           | auto-detect                   | Path to a specific Python interpreter for `run.sh`   |
 
 ---
 
 ## Running the Application
 
-### Option A — Launch the Streamlit UI (recommended)
+### Option A — Full stack (recommended) — `./run.sh`
+
+Boots the FastAPI backend, the Streamlit analytical UI, and the Next.js chat UI in the background.
+First run also `npm install`s the web dependencies.
+
+```bash
+./run.sh        # api :8000 · streamlit :8501 · web :3000
+./status.sh     # health check across all three services
+./stop.sh       # graceful TERM → KILL with port fallback
+```
+
+After `run.sh` reports **✅ Stack is up.**, open one of:
+
+| URL                              | What it is                                                  |
+| -------------------------------- | ----------------------------------------------------------- |
+| `http://localhost:3000`          | **Next.js Claude-style chat UI** (primary demo experience)  |
+| `http://localhost:8501`          | Streamlit — 6 tabs (Chat, Quick Search, Diagnostic, Comparison, KG, Architecture) |
+| `http://localhost:8000/docs`     | FastAPI Swagger / OpenAPI documentation                     |
+| `http://localhost:8000/api/health` | JSON health probe                                          |
+
+Environment overrides:
+
+```bash
+API_PORT=8001 STREAMLIT_PORT=8502 WEB_PORT=3001 ./run.sh
+SKIP_WEB=1 ./run.sh                       # API + Streamlit only
+SKIP_STREAMLIT=1 ./run.sh                 # API + Next.js only
+PYTHON_BIN=/path/to/venv/bin/python ./run.sh
+```
+
+Logs land under `.run/logs/`:
+
+```bash
+tail -f .run/logs/api.log
+tail -f .run/logs/streamlit.log
+tail -f .run/logs/web.log
+```
+
+### Option B — Streamlit only
 
 ```bash
 streamlit run app.py
 ```
 
-Streamlit will print a local URL (typically `http://localhost:8501`). Open it in your browser.
+Streamlit prints a local URL (typically `http://localhost:8501`). The UI exposes six tabs:
 
-On the first launch the app will:
+1. **💬 Chat** — ChatGPT-style conversational copilot (auto-correct + multi-turn clarifications).
+2. **🔍 Quick Search** — Clarifier + FAISS retrieval. Works offline, no LLM needed.
+3. **🩺 Diagnostic Copilot** — Hybrid retrieval + LLM answer + critic loop.
+4. **⚖️ Comparison** — Direct LLM vs Classical RAG vs Hybrid GraphRAG side-by-side.
+5. **🔗 Knowledge Graph** — Entity / relation statistics + entity explorer.
+6. **🔄 Architecture & Cost** — Pipeline-flow diagram + cost-projection dashboard.
 
-1. Process `data/pdfs/*.txt` and `data/excel/*.xlsx` into `data/processed/all_chunks.json`.
-2. Build the knowledge graph and write `data/processed/knowledge_graph.gpickle`.
-3. Build BM25 + ChromaDB indexes (kept in memory).
+On first launch the app will:
 
-Subsequent launches load cached artifacts and start in seconds.
+1. Parse the documents under `doc_pipeline/input_docs/` (and `data/pdfs/`, `data/excel/` if
+   present).
+2. Chunk them with the smart hybrid chunker.
+3. Build the FAISS vector index and persist it under `doc_pipeline/vector_store/`.
+4. Build the knowledge graph and write `data/processed/knowledge_graph.json`.
+5. Construct the BM25 index in memory.
 
-### Option B — Run from Python (programmatic)
+Subsequent launches load the cached artefacts and start in seconds. Click **🔄 Rebuild Indexes** in
+the sidebar to force a full rebuild.
 
-```python
-from core.document_processor import process_all_documents
-from core.knowledge_graph import KnowledgeGraph
-from core.orchestrator import Orchestrator
+### Option C — FastAPI backend only
 
-docs = process_all_documents()
-kg = KnowledgeGraph()
-if not kg.load():
-    kg.build_from_documents(docs)
-
-orc = Orchestrator(docs, kg)
-orc.initialize()
-
-result = orc.process_query(
-    "Pump P-203 has high vibration alarm ALM-P001. What is the likely cause and fix?"
-)
-print(result["answer"])
-print("Citations:", [c["chunk_id"] for c in result["evidence"]])
-print("Critic verdict:", result["critic"]["final_verdict"]["verdict"])
+```bash
+uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Option C — Run the built-in benchmark suite
+Then `curl` it directly:
 
-```python
-from comparison.benchmark import run_benchmark, SAMPLE_QUERIES
-from comparison.classical_rag import ClassicalRAG
-# (reuse `orc` and `docs` from option B)
+```bash
+SID=demo-$(uuidgen)
 
-classical = ClassicalRAG(docs); classical.initialize()
-report = run_benchmark(orc, classical, queries=SAMPLE_QUERIES)
-print(report["summary"])
+curl -s http://localhost:8000/api/health | jq
+
+curl -s -X POST http://localhost:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d "{\"session_id\":\"$SID\",\"message\":\"why did it fail?\"}" | jq
+
+curl -s -X POST http://localhost:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d "{\"session_id\":\"$SID\",\"message\":\"CNC-A-004\"}" | jq
+
+curl -s -X POST http://localhost:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d "{\"session_id\":\"$SID\",\"message\":\"skip\"}" | jq '.state.turns[-1]'
 ```
 
-Or run it interactively via the **📋 Benchmark** tab in the UI.
+### Option D — Next.js dev server only
 
-### Re-indexing
+```bash
+cd web
+npm install
+NEXT_PUBLIC_API_ORIGIN=http://localhost:8000 npm run dev
+```
 
-Click **🔄 Re-index All Data** in the sidebar, or delete `data/processed/` and relaunch.
+`next.config.js` proxies `/api/*` to whatever `NEXT_PUBLIC_API_ORIGIN` points to, so you can point
+the UI at a remote backend without code changes.
+
+### Option E — Unified CLI
+
+```bash
+# Build (or load) indexes and run a small demo:
+python main.py
+
+# Force a full rebuild:
+python main.py --rebuild
+
+# Run one query in Quick Search mode (no LLM required):
+python main.py --query "What is the OEE target for Q2 2026?"
+
+# Run the full diagnostic pipeline (LLM + critic — needs OPENAI_API_KEY):
+python main.py --diagnostic "Pump P-203 has high vibration alarm ALM-P001. Cause and fix?"
+
+# Run all three pipelines side by side:
+python main.py --compare "Belt tracking deviation on conveyor CV-301. Alarm ALM-C002."
+
+# Skip LLM components even if an API key is present:
+python main.py --no-llm
+
+# Emit the result as JSON for piping:
+python main.py --query "..." --json
+```
+
+### Option F — Programmatic API
+
+```python
+from pipeline import ManufacturingPipeline
+
+pipe = ManufacturingPipeline()
+pipe.build_or_load()                # loads cached FAISS + KG, or builds on first run
+
+# Quick search (no LLM required)
+r = pipe.quick_search("What is the OEE target for Q2 2026?", top_k=3)
+print(r.clarification.intent.value, [e.normalized for e in r.clarification.entities])
+for ev in r.evidence:
+    print(ev["metadata"]["source"], ev["vector_score"])
+
+# Full diagnostic (LLM + critic — needs OPENAI_API_KEY)
+r = pipe.diagnostic("Pump P-203 has high vibration alarm ALM-P001. Cause and fix?")
+print(r.answer)
+print("Citations:", [c["chunk_id"] for c in r.evidence])
+print("Critic:", (r.critic or {}).get("final_verdict", {}).get("verdict"))
+
+# Compare all 3 pipelines
+results = pipe.compare("Belt tracking deviation on conveyor CV-301")
+for name, res in results.items():
+    print(name, res.metrics["total_latency_ms"], "ms")
+```
+
+Or drive the conversational `ChatAgent` directly:
+
+```python
+from pipeline import ChatAgent, ChatState, ManufacturingPipeline
+
+pipe = ManufacturingPipeline()
+pipe.build_or_load()
+agent = ChatAgent(pipe)
+
+state = ChatState()
+
+agent.handle(state, "why did it fail?")
+# → assistant asks: "Which equipment or line? (e.g., CNC-A-004, …)"
+agent.handle(state, "CNC-A-004")
+# → assistant asks one optional follow-up: "When did this occur?"
+agent.handle(state, "skip")
+# → assistant returns the grounded answer
+
+for turn in state.turns:
+    print(f"[{turn.role:9s}/{turn.kind:10s}] {turn.content[:120]}")
+```
+
+### Option G — doc_pipeline-only
+
+If you only need the document ingestion + clarifier layer (no LLM, no KG), you can still run the
+standalone façade:
+
+```bash
+streamlit run doc_pipeline/app.py        # standalone Streamlit
+python doc_pipeline/main.py              # standalone CLI demo
+```
 
 ---
 
 ## Configuration
 
-All knobs live in `config.py`:
+All knobs live in the root `config.py`. Defaults are sensible; override via `.env` (see the table
+above). Highlights:
 
-| Setting              | Default | Effect                                                |
-| -------------------- | ------- | ----------------------------------------------------- |
-| `CHUNK_SIZE`         | 512     | Approx words per chunk                                |
-| `CHUNK_OVERLAP`      | 64      | Sentence overlap between chunks                       |
-| `TOP_K_RETRIEVAL`    | 10      | Candidates from each retriever                        |
-| `TOP_K_RERANK`       | 5       | Final evidence chunks shown to the LLM                |
-| `RRF_K`              | 60      | RRF damping constant                                  |
-| `MAX_CRITIC_RETRIES` | 2       | Max regeneration attempts after a failed critic check |
-| `CHROMA_COLLECTION`  | `manufacturing_docs` | ChromaDB collection name                |
+### Paths
 
-Domain ontology (entity / relation types and traversal routes) is also in `config.py` under
-`DOMAIN_ONTOLOGY` — extend it to add new equipment classes.
+- `INPUT_DOCS_DIR` — `doc_pipeline/input_docs/` (canonical corpus shipped in the repo)
+- `DATA_DIR` / `PDF_DIR` / `EXCEL_DIR` — auxiliary corpora picked up if present
+- `VECTOR_STORE_DIR` — `doc_pipeline/vector_store/` (FAISS index lives here)
+- `PROCESSED_DIR` — `data/processed/` (knowledge_graph.json lives here)
+
+### Retrieval / Chunking
+
+| Setting                          | Default | Effect                                                |
+| -------------------------------- | ------- | ----------------------------------------------------- |
+| `TOP_K_RETRIEVAL`                | 10      | Candidates from each retriever                        |
+| `TOP_K_RERANK`                   | 5       | Final evidence chunks shown to the LLM                |
+| `RRF_K`                          | 60      | RRF damping constant                                  |
+| `MAX_CRITIC_RETRIES`             | 2       | Max regeneration attempts after a failed critic check |
+| `DEFAULT_TOP_K`                  | 5       | Quick-search default                                  |
+| `DEFAULT_CONTEXT_WINDOW`         | 1       | Neighbouring chunks fetched alongside each hit        |
+| `SEMANTIC_SIMILARITY_THRESHOLD`  | 0.45    | Semantic chunker boundary threshold                   |
+| `SEMANTIC_MAX_CHUNK_SIZE`        | 1500    | Soft cap on semantic chunk size                       |
+| `RECURSIVE_CHUNK_SIZE`           | 1000    | Recursive chunker target size                         |
+| `RECURSIVE_CHUNK_OVERLAP`        | 150     | Recursive chunker overlap                             |
+| `SLIDING_WINDOW_SIZE` / `_STEP`  | 800/400 | Sliding-window chunker for Excel                      |
+| `FAISS_IVF_MIN_CHUNKS`           | 100     | Threshold above which FAISS uses IVF, not flat        |
+
+Domain ontology (entity / relation types and traversal routes) lives under `DOMAIN_ONTOLOGY` —
+extend it to add new equipment classes.
 
 ---
 
 ## Sample Queries
 
-The UI sidebar offers one-click samples from `comparison/benchmark.py → SAMPLE_QUERIES`:
+| Mode               | Example                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| Quick Search       | _"What is the OEE target for Q2 2026?"_                                                    |
+| Quick Search       | _"maintanance schedul for spindle bearings"_ (spelling + acronym corrections demo)         |
+| Quick Search       | _"Compare Nippon Steel vs ArcelorMittal on quality and delivery"_                          |
+| Diagnostic Copilot | _"Pump P-203 has high vibration alarm ALM-P001. Likely cause and fix?"_                    |
+| Diagnostic Copilot | _"Belt tracking deviation on conveyor CV-301. ALM-C002 triggered."_                        |
+| Diagnostic Copilot | _"Hydraulic press HP-401 pressure loss. Cycle time up 40%."_                               |
+| Diagnostic Copilot | _"What was the root cause of the spindle bearing failure on CNC-A-004?"_                   |
+| Procedure          | _"How do I perform a tool change on the Mori Seiki NHX5000?"_                              |
+| Inventory          | _"Spare parts needed for bearing replacement on P-203?"_                                   |
+| Alarm              | _"PLC fault FC-003 on CV-302. Communication loss with VFD."_                               |
+| Compliance         | _"Are we compliant with OSHA 29 CFR 1910.147 lockout tagout requirements?"_                |
 
-| Category       | Difficulty | Example                                                                    |
-| -------------- | ---------- | -------------------------------------------------------------------------- |
-| troubleshoot   | medium     | _"Pump P-203 has high vibration alarm ALM-P001. Likely cause and fix?"_    |
-| troubleshoot   | medium     | _"Belt tracking deviation on conveyor CV-301. ALM-C002 triggered."_        |
-| troubleshoot   | hard       | _"Hydraulic press HP-401 pressure loss. Cycle time up 40%."_               |
-| procedure      | easy       | _"PM schedule for pump P-201 mechanical seal?"_                            |
-| inventory      | easy       | _"Spare parts needed for bearing replacement on P-203?"_                   |
-| alarm          | hard       | _"PLC fault FC-003 on CV-302. Communication loss with VFD."_               |
-| specification  | easy       | _"Max operating pressure for HP-402 hydraulic system?"_                    |
-| troubleshoot   | hard       | _"ALM-P003 seal leak on P-202 AND ALM-P001 vibration on P-203. Related?"_  |
+The Streamlit sidebar offers one-click samples; the CLI accepts any of these via `--query`,
+`--diagnostic`, or `--compare`.
 
 ---
 
 ## Pipeline Comparison
 
-| Capability             | Direct LLM | Classical RAG | **Hybrid GraphRAG** |
-| ---------------------- | ---------- | ------------- | ------------------- |
-| Retrieval              | none       | Vector only   | BM25 + Vector + Graph |
-| Knowledge graph        | ❌         | ❌            | ✅                  |
-| Query understanding    | basic      | basic         | intent + entity     |
-| Evidence grounding     | none       | partial       | full, chunk-level   |
-| Self-correction        | ❌         | ❌            | ✅ critic loop      |
-| Citations              | ❌         | partial       | `[source, chunk_id]` |
-| ID / jargon handling   | poor       | limited       | excellent (graph-aware) |
-| Audit trail            | ❌         | limited       | full pipeline trace |
-| Est. answer accuracy¹  | ~45%       | ~60%          | ~85%                |
-| Est. hallucination¹    | ~40%       | ~25%          | ~8%                 |
+| Capability              | Direct LLM | Classical RAG  | **Hybrid GraphRAG**          |
+| ----------------------- | ---------- | -------------- | ---------------------------- |
+| Retrieval               | none       | FAISS only     | BM25 + FAISS + Graph + RRF   |
+| Knowledge graph         | ❌         | ❌             | ✅ NetworkX (graph-aware)    |
+| Query understanding     | basic      | basic          | Clarifier (intent + entity + slot) + Query Corrector |
+| Evidence grounding      | none       | partial        | full, chunk-level            |
+| Self-correction         | ❌         | ❌             | ✅ critic loop                |
+| Citations               | ❌         | partial        | `[source, chunk_id]`         |
+| ID / jargon handling    | poor       | limited        | excellent (graph-aware)      |
+| Audit trail             | ❌         | limited        | full pipeline trace          |
+| Est. answer accuracy¹   | ~45%       | ~60%           | ~85%                         |
+| Est. hallucination rate¹| ~40%       | ~25%           | ~8%                          |
 
 ¹ Heuristic estimates from `utils/metrics.py`, used to power the UI cost-projection charts.
 
@@ -597,14 +1142,69 @@ The UI sidebar offers one-click samples from `comparison/benchmark.py → SAMPLE
 
 ## Troubleshooting
 
-| Symptom                                              | Fix                                                                         |
-| ---------------------------------------------------- | --------------------------------------------------------------------------- |
-| `OPENAI_API_KEY` errors                              | Edit `.env` and restart `streamlit`                                         |
-| `chromadb` errors about existing collection          | Click **🔄 Re-index All Data** in the sidebar                               |
-| "No graph entities matched this query"               | Include explicit IDs like `P-203`, `ALM-P001`, `SP-1042` in the query       |
-| First launch is slow                                 | Expected — indexes build once and are cached under `data/processed/`        |
-| Critic always returns FAIL                           | Confirm `OPENAI_API_KEY` works and `LLM_MODEL` supports chat completions    |
-| Excel/PDF not picked up                              | Place files in `data/pdfs/` (`.txt`) or `data/excel/` (`.xlsx`) and re-index |
+| Symptom                                                | Fix                                                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY` errors                                | Add the key to `.env` and restart the app. Quick Search works offline.                    |
+| `ModuleNotFoundError: rank_bm25`                       | No action needed — the unified pipeline ships a pure-Python BM25 fallback.                |
+| `ModuleNotFoundError: chromadb`                        | Expected — FAISS is the default. Uncomment `chromadb` in `requirements.txt` if you want it. |
+| "No graph entities matched this query"                 | Include explicit IDs (`P-203`, `ALM-P001`, `CNC-A-004`, `SP-1042`) in the query.          |
+| First launch is slow                                   | Expected — FAISS index + KG build on first run, then cached. Use `python main.py --rebuild` to force a refresh. |
+| Critic always returns FAIL                             | Verify `ANSWER_MODEL` / `CRITIC_MODEL` are reachable. If `qwen2.5:3b` is unavailable, set `CRITIC_MODEL=gpt-4o-mini`. |
+| Excel / PDF not picked up                              | Drop new files into `doc_pipeline/input_docs/`, `data/pdfs/`, or `data/excel/` and click **🔄 Rebuild Indexes**. |
+| Streamlit `ModuleNotFoundError` for doc_pipeline modules | Run `streamlit run app.py` from the project root. The unified app fixes `sys.path` automatically. |
+
+---
+
+## What Changed in the Unification
+
+Previously the repository contained **two parallel systems** that shared zero code:
+
+| System                | Entry                  | Stack                                                          | Status before unification |
+| --------------------- | ---------------------- | -------------------------------------------------------------- | ------------------------- |
+| `doc_pipeline/`       | `doc_pipeline/app.py`  | pdfplumber + smart chunker + FAISS + Clarifier (no LLM, no KG) | Worked standalone         |
+| `core/` + root `app.py` | `app.py`             | basic chunker + ChromaDB + NetworkX KG + LLM + critic          | Required ChromaDB         |
+
+The unification:
+
+1. **One config** (`config.py`) is the single source of truth for paths, models, and thresholds.
+   `doc_pipeline/config.py` now proxies to it.
+2. **New `pipeline/` package** wires the two systems together via an adapter (`pipeline/adapter.py`)
+   that converts `doc_pipeline.chunking.Chunk` objects into the `{chunk_id, text, metadata}` dicts
+   the core retrievers and KG consume — and auto-extracts equipment / alarm / part / fault entities
+   from the chunk text so the KG builds without re-parsing.
+3. **FAISS is now the default vector store.** `pipeline/faiss_retriever.py` is API-compatible with
+   the legacy `core/retrieval/vector_retriever.py` and is injected into `HybridRetriever` and
+   `ClassicalRAG` so embeddings are computed **once** and shared everywhere.
+4. **ChromaDB is now optional.** `hybrid_retriever.py` and `classical_rag.py` fall back to FAISS if
+   `chromadb` is not installed.
+5. **BM25 is pure-Python by default.** A small `_SimpleBM25Okapi` is included in
+   `core/retrieval/bm25_retriever.py`, so the pipeline runs without `rank_bm25`. If `rank_bm25` is
+   installed, it's preferred automatically.
+6. **The KG entity regex was extended** to match doc_pipeline-style IDs
+   (`CNC-A-004`, `STAMP-A-002`, `TH-4401`, …) in addition to the legacy `P-203` / `SP-1042`
+   schemas.
+7. **Tiered LLM routing** (`ANSWER_MODEL`, `RETRY_MODEL`, `CRITIC_MODEL`, `CLASSIFY_MODEL`,
+   `DIRECT_LLM_MODEL`, `CLASSICAL_RAG_MODEL`) lets you use strong cloud models for user-facing
+   answers and cheap local models (Ollama) for auxiliary tasks.
+8. **Single root entry points** replace the two separate apps: `app.py` (5-tab Streamlit) and
+   `main.py` (CLI with `--query` / `--diagnostic` / `--compare` / `--rebuild` / `--no-llm`).
+9. **The Clarifier Agent and Query Corrector run on every query**, so retrieval is always entity-
+   and intent-aware, regardless of mode.
+10. **Sample documents and a prebuilt FAISS index ship in the repo** — `git clone && streamlit run app.py`
+    works end-to-end without any pre-step.
+11. **Conversational `ChatAgent`** (`pipeline/chat_agent.py`) adds a multi-turn slot-filling state
+    machine on top of the Clarifier: spelling fixes are surfaced inline, missing required slots
+    trigger targeted follow-up questions, and the agent transparently routes to Diagnostic mode (or
+    Quick Search if no LLM key is set).
+12. **`api/server.py`** exposes the agent over HTTP (`/api/chat`, `/api/health`, `/api/stats`,
+    `/api/reset`, `/api/sessions/{id}`) with per-session memory and CORS — ready for any front-end.
+13. **`web/` Next.js 14 chat UI** delivers a Claude-style demo experience (cream/copper palette,
+    Tailwind, markdown answers, evidence + KG panels) and talks to FastAPI via a `next.config.js`
+    rewrite — no hard-coded URLs.
+14. **One-command stack** — `./run.sh` boots api + streamlit + web with PID tracking under `.run/`;
+    `./stop.sh` tears them down cleanly; `./status.sh` reports health across all three.
+15. **Hardened spell corrector** — protected verbs/nouns (`fail`, `break`, `stop`, `leak`, `jam`, …)
+    and a minimum-target-length rule eliminate false positives like `fail → FAI`.
 
 ---
 

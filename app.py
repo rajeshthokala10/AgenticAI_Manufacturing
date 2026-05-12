@@ -30,7 +30,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from config import LLM_MODEL, EMBEDDING_MODEL, llm_available
-from pipeline import ManufacturingPipeline
+from pipeline import ChatAgent, ChatState, ManufacturingPipeline
 from utils.metrics import (
     compute_accuracy_estimates, compute_cost_projection,
     format_cost, format_latency,
@@ -81,6 +81,30 @@ CSS = """
     .metric-box { background:#e8eaf6; border-radius:8px; padding:16px; text-align:center; }
     .metric-num { font-size:1.6rem; font-weight:700; color:#283593; }
     .metric-label { font-size:.85rem; color:#5c6bc0; }
+
+    /* Chat */
+    .chat-meta-chip {
+        display:inline-block; background:#eef2ff; color:#3949ab;
+        padding:2px 9px; border-radius:10px; font-size:.75rem;
+        margin:1px 4px 1px 0;
+    }
+    .chat-intent {
+        display:inline-block; background:#283593; color:#fff;
+        padding:2px 10px; border-radius:10px; font-size:.75rem; font-weight:600;
+        margin-right:6px;
+    }
+    .chat-correction {
+        background:#fffde7; border-left:4px solid #f9a825;
+        padding:8px 12px; border-radius:4px; font-size:.95rem;
+    }
+    .chat-clarify {
+        background:#e3f2fd; border-left:4px solid #1565c0;
+        padding:8px 12px; border-radius:4px; font-size:.95rem;
+    }
+    .chat-empty {
+        text-align:center; color:#9fa8da; padding:42px 12px;
+        border:1px dashed #c5cae9; border-radius:12px; margin:18px 0;
+    }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -96,6 +120,14 @@ def load_pipeline():
 
 pipe = load_pipeline()
 LLM_ON = pipe.llm_enabled
+
+
+@st.cache_resource(show_spinner=False)
+def get_chat_agent() -> ChatAgent:
+    return ChatAgent(pipe, max_optional_asks=1)
+
+
+chat_agent = get_chat_agent()
 
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────
@@ -292,6 +324,126 @@ def render_graph_view(graph_context: dict | None) -> None:
 
 
 # ── Tabs ────────────────────────────────────────────────────────────────────
+def _ensure_chat_state() -> ChatState:
+    if "chat_state" not in st.session_state:
+        st.session_state.chat_state = ChatState()
+    return st.session_state.chat_state
+
+
+def _render_answer_meta(meta: dict) -> None:
+    """Compact metadata strip shown under each LLM/quick answer."""
+    chips: list[str] = []
+
+    clar = meta.get("clarification")
+    if clar is not None:
+        chips.append(
+            f'<span class="chat-intent">{clar.intent.value.upper()}</span>'
+            f'<span class="chat-meta-chip">confidence {clar.intent_confidence:.0%}</span>'
+        )
+        for e in clar.entities[:5]:
+            chips.append(f'<span class="chat-meta-chip">{e.entity_type}: {e.normalized}</span>')
+
+    metrics = meta.get("metrics") or {}
+    if metrics.get("total_latency_ms"):
+        chips.append(f'<span class="chat-meta-chip">⏱ {format_latency(metrics["total_latency_ms"])}</span>')
+    if metrics.get("total_tokens"):
+        chips.append(f'<span class="chat-meta-chip">🧩 {metrics["total_tokens"]:,} tokens</span>')
+    if metrics.get("cost_estimate_usd") is not None:
+        chips.append(f'<span class="chat-meta-chip">💲 {format_cost(metrics["cost_estimate_usd"])}</span>')
+
+    critic = (meta.get("critic") or {}).get("final_verdict", {}) or {}
+    verdict = critic.get("verdict")
+    if verdict:
+        cls = {"PASS": "pass-badge", "FAIL": "fail-badge"}.get(verdict, "skip-badge")
+        chips.append(f'<span class="{cls}">Critic: {verdict}</span>')
+
+    if chips:
+        st.markdown(" ".join(chips), unsafe_allow_html=True)
+
+
+def _render_chat_turn(turn) -> None:
+    if turn.kind == "correction":
+        with st.chat_message("assistant", avatar="🪄"):
+            st.markdown(f'<div class="chat-correction">{turn.content}</div>', unsafe_allow_html=True)
+        return
+
+    if turn.kind == "clarify":
+        with st.chat_message("assistant", avatar="❓"):
+            st.markdown(f'<div class="chat-clarify">{turn.content}</div>', unsafe_allow_html=True)
+        return
+
+    if turn.kind == "system":
+        with st.chat_message("assistant", avatar="ℹ️"):
+            st.markdown(turn.content)
+        return
+
+    if turn.role == "user":
+        with st.chat_message("user"):
+            st.markdown(turn.content)
+        return
+
+    with st.chat_message("assistant"):
+        st.markdown(turn.content)
+        if turn.kind == "answer":
+            _render_answer_meta(turn.meta)
+
+            evidence = turn.meta.get("evidence") or []
+            if evidence:
+                with st.expander(f"📎 Evidence ({len(evidence)} chunks)"):
+                    render_evidence(evidence)
+
+            graph_ctx = turn.meta.get("graph_context")
+            if graph_ctx and graph_ctx.get("nodes"):
+                with st.expander(f"🔗 Knowledge graph context ({len(graph_ctx['nodes'])} nodes)"):
+                    render_graph_view(graph_ctx)
+
+
+def tab_chat(opts: dict) -> None:
+    state = _ensure_chat_state()
+
+    st.markdown("### 💬 Chat — Conversational Manufacturing Copilot")
+    st.caption(
+        "Ask anything about your operations. I auto-correct domain jargon, ask "
+        "follow-up questions when details are missing, and ground answers in "
+        "your documents + knowledge graph."
+    )
+
+    head_l, head_r = st.columns([6, 1])
+    with head_r:
+        if st.button("🆕 New chat", use_container_width=True, key="chat_reset"):
+            state.reset()
+            st.rerun()
+
+    if not LLM_ON:
+        st.info(
+            "Running in **retrieval-only mode** (no `OPENAI_API_KEY` detected). "
+            "Answers will summarise top evidence; for grounded LLM answers, set the key."
+        )
+
+    if not state.turns:
+        st.markdown(
+            '<div class="chat-empty">👋 Try something like<br>'
+            "<i>“why did CNC Line 4 shut down in February?”</i> · "
+            "<i>“maintanance schedul for spindle bearings”</i> · "
+            "<i>“OEE target for Q2 2026?”</i></div>",
+            unsafe_allow_html=True,
+        )
+
+    for turn in state.turns:
+        _render_chat_turn(turn)
+
+    if state.awaiting_slot is not None:
+        placeholder = f"Answer: {state.awaiting_slot.prompt}  (or type 'skip')"
+    else:
+        placeholder = "Ask anything about manufacturing operations…"
+
+    message = st.chat_input(placeholder)
+    if message:
+        with st.spinner("Thinking…"):
+            chat_agent.handle(state, message)
+        st.rerun()
+
+
 def tab_quick_search(opts: dict) -> None:
     st.markdown("### 🔍 Quick Search — Clarifier + FAISS Retrieval")
     st.caption("Fast semantic search. Does not call any LLM.")
@@ -545,6 +697,7 @@ def main() -> None:
     opts = render_sidebar()
 
     tabs = st.tabs([
+        "💬 Chat",
         "🔍 Quick Search",
         "🩺 Diagnostic Copilot",
         "⚖️ Comparison",
@@ -553,14 +706,16 @@ def main() -> None:
     ])
 
     with tabs[0]:
-        tab_quick_search(opts)
+        tab_chat(opts)
     with tabs[1]:
-        tab_diagnostic(opts)
+        tab_quick_search(opts)
     with tabs[2]:
-        tab_comparison()
+        tab_diagnostic(opts)
     with tabs[3]:
-        tab_knowledge_graph()
+        tab_comparison()
     with tabs[4]:
+        tab_knowledge_graph()
+    with tabs[5]:
         tab_architecture()
 
 

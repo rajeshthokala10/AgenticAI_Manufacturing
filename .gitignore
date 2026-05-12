@@ -8,3 +8,14 @@ dist/
 build/
 .claude/
 doc_pipeline/output/
+
+# run.sh / stop.sh artifacts
+.run/
+
+# Next.js (web/)
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+web/*.tsbuildinfo
+web/.env.local

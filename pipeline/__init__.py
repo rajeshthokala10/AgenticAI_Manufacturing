@@ -30,5 +30,14 @@ if not logger.handlers:
 
 
 from .unified_pipeline import ManufacturingPipeline, PipelineMode, PipelineResult
+from .chat_agent import ChatAgent, ChatState, ChatTurn
 
-__all__ = ["ManufacturingPipeline", "PipelineMode", "PipelineResult", "logger"]
+__all__ = [
+    "ManufacturingPipeline",
+    "PipelineMode",
+    "PipelineResult",
+    "ChatAgent",
+    "ChatState",
+    "ChatTurn",
+    "logger",
+]
