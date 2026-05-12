@@ -1,6 +1,7 @@
 import time
 from typing import Dict
 
+from config import DIRECT_LLM_MODEL
 from core.llm_client import call_llm_with_metrics
 
 
@@ -17,6 +18,7 @@ def direct_llm_query(raw_query: str) -> Dict:
         user_prompt=raw_query,
         temperature=0.7,
         max_tokens=1500,
+        model=DIRECT_LLM_MODEL,
     )
 
     total_time = (time.time() - start) * 1000
