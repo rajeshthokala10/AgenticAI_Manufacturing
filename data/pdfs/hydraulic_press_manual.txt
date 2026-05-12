@@ -1,0 +1,388 @@
+================================================================================
+              HYDRAULIC PRESS HP-400 SERIES MAINTENANCE MANUAL
+                        Document No: MAN-HP400-REV03
+                        Revision: 03 | Date: 2024-10-05
+                        Classification: Internal Use Only
+================================================================================
+
+1. SCOPE AND PURPOSE
+--------------------------------------------------------------------------------
+This manual provides comprehensive maintenance procedures, troubleshooting
+guidelines, and safety information for the HP-400 series hydraulic presses
+installed at the Greenfield Manufacturing Facility. All maintenance and
+operations personnel must review this document and complete HP-400 training
+(Course ID: TRN-HP400-01) before performing any work on this equipment.
+
+Related documents:
+  - PLC Controls Reference (DOC-PLC-500-REV03)
+  - Conveyor System Guide (MAN-CV300-REV02) — CV-301 infeed integration
+  - Pump Maintenance Manual (MAN-P200-REV04) — P-203 oil cooler supply
+
+
+2. EQUIPMENT SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+Tag     | Service          | Tonnage | Stroke (in) | Daylight (in) | Motor HP
+--------|------------------|---------|-------------|---------------|--------
+HP-401  | Forming Press    | 200     | 18          | 30            | 40
+HP-402  | Stamping Press   | 150     | 12          | 24            | 30
+
+General Specifications (all models):
+  - Manufacturer: PressForce Machinery, Model PFM-400 Series
+  - Frame Type: Four-column, tie-rod construction
+  - Bed Size: 36" x 48" (HP-401) / 30" x 36" (HP-402)
+  - Approach Speed: 400 in/min (rapid traverse)
+  - Pressing Speed: 10-60 in/min (adjustable)
+  - Return Speed: 300 in/min
+  - Cycle Time: 8-45 seconds (depending on stroke and speed settings)
+  - Repeatability: +/- 0.001" position accuracy
+  - Maximum Operating Pressure: 3000 PSI
+  - Hydraulic Oil: Mobil DTE 25 (ISO VG 46)
+  - Oil Reservoir Capacity: 120 gallons (HP-401) / 80 gallons (HP-402)
+  - Oil Temperature Range: 70-130°F (21-54°C)
+
+Hydraulic Power Unit:
+  - Main Pump: Parker PV046 variable displacement axial piston pump
+  - Pump Pressure: 3000 PSI max, 2500 PSI continuous
+  - Flow Rate: 23 GPM at 1800 RPM
+  - Motor: WEG W22, 40HP (HP-401) / 30HP (HP-402), 460V/3ph/60Hz
+  - Oil Filtration: Parker 15CN series, 10 micron absolute
+  - Oil Cooler: Water-cooled shell & tube (cooling water from pump P-203)
+
+Control System:
+  - PLC: Allen-Bradley CompactLogix 5380 (1769-L33ER)
+  - HMI: Allen-Bradley PanelView Plus 7, 12" touchscreen
+  - Servo Valve: Moog D634 series direct drive servo valve
+  - Position Feedback: Temposonics R-Series magnetostrictive linear transducer
+  - Pressure Transducers: WIKA A-10, 0-5000 PSI, 4-20mA output
+
+HP-401 Integration Notes:
+  - Infeed from conveyor CV-301 main production line.
+  - Part presence sensor DI-HP401-01 (Banner Q45) confirms workpiece in die.
+  - PLC interlock: CV-301 must be running and part detected before press
+    cycle can initiate. Interlock handled by Allen-Bradley CompactLogix via
+    EtherNet/IP to Siemens S7-1500 gateway (see PLC Reference, Section 3).
+
+HP-402 Integration Notes:
+  - Stand-alone operation with manual load/unload.
+  - Light curtain safety system: Allen-Bradley GuardShield 450L.
+  - Dual palm button start required for manual cycle initiation.
+
+
+3. COMPONENT BREAKDOWN
+--------------------------------------------------------------------------------
+
+3.1 Hydraulic Cylinder
+  - Bore: 10" (HP-401) / 8" (HP-402)
+  - Rod: 7" (HP-401) / 5.5" (HP-402) chrome-plated
+  - Cylinder Part: PFM-CYL-400-10 / PFM-CYL-400-08
+  - Rod Seal Kit: PFM-RSK-400-10 / PFM-RSK-400-08
+  - Piston Seal Kit: PFM-PSK-400-10 / PFM-PSK-400-08
+  - Rod Wiper: PFM-WPR-400-10 / PFM-WPR-400-08
+  - Cushion Valves: PFM-CV-400 (both ends)
+
+3.2 Hydraulic Pump Unit
+  - Main Pump: Parker PV046R1K1T1NMMC (Part: PKR-PV046-NM)
+  - Charge Pump: Parker PGP505 gear pump (Part: PKR-PGP505)
+  - Coupling: Lovejoy L-150 jaw coupling (Part: LVJ-L150-28)
+  - Suction Strainer: Parker SE-75-10 (Part: PKR-SE75-10)
+  - Pressure Filter: Parker 15CN-110-QEVE (Part: PKR-15CN-110)
+  - Return Filter: Parker 15CN-210-QBVE (Part: PKR-15CN-210)
+  - Breather Filter: Parker BB-2-06 (Part: PKR-BB2-06)
+
+3.3 Servo Valve
+  - Model: Moog D634-319C (Part: MOOG-D634-319C)
+  - Flow rating: 15 GPM at 1000 PSI drop
+  - Response: 50 Hz at 90° phase lag
+  - Electrical: +/-10V analog command, 4-wire position feedback
+  - Filter requirement: Oil cleanliness ISO 18/16/13 minimum
+
+3.4 Accumulator
+  - Type: Parker A4-3100 bladder accumulator
+  - Part: PKR-A4-3100-3G
+  - Volume: 3 gallon
+  - Precharge: Nitrogen, 1500 PSI (50% of max system pressure)
+  - Function: Absorbs pressure spikes and supplements flow during rapid advance
+  - Inspection: Precharge pressure check quarterly
+
+3.5 Platen and Tooling Interface
+  - Upper platen: PFM-PLT-400-U (T-slot pattern, 36x48 / 30x36)
+  - Lower platen: PFM-PLT-400-L (T-slot pattern, matching)
+  - T-slot size: 5/8"-11 UNC
+  - Parallelism: 0.001" per 12" of bed width
+  - Die height adjustment: Motorized, 0-6" range
+  - Die clamp: Hydraulic die clamping system, 4 clamps per platen
+
+
+4. ALARM CODES
+--------------------------------------------------------------------------------
+
+Code      | Description                          | Severity | Action
+----------|--------------------------------------|----------|------------------
+ALM-H001  | Hydraulic oil pressure low (<1800 PSI)| Warning  | Check pump/filter
+ALM-H002  | Hydraulic oil temperature high (>130°F)| Warning | Check oil cooler
+ALM-H003  | Oil level low                         | Critical | Stop, add oil
+ALM-H004  | Position error (>0.010" from target)  | Critical | Stop, recalibrate
+ALM-H005  | Cycle time exceeded (>120% of normal) | Warning  | Check for binding
+ALM-H006  | Light curtain interrupted during cycle | Critical | E-stop activated
+
+Additional Safety Alarms:
+  - ALM-H007: Emergency stop activated — manual reset required
+  - ALM-H008: Guard door open during auto cycle — stop and lock
+  - ALM-H009: Dual palm button timeout (HP-402 manual mode)
+  - ALM-H010: Servo valve fault — position does not match command
+
+Alarm routing: All alarms processed by Allen-Bradley CompactLogix 5380.
+Displayed on PanelView Plus 7 HMI at operator station. Critical alarms
+shared with Siemens S7-1500 master PLC via EtherNet/IP gateway (see PLC
+Controls Reference, Section 3 for gateway configuration).
+
+
+5. TROUBLESHOOTING PROCEDURES
+--------------------------------------------------------------------------------
+
+5.1 PRESSURE LOSS (ALM-H001)
+
+Probable Causes:
+  a) Hydraulic filter clogged (pressure or return)
+  b) Main pump internal wear
+  c) Servo valve internal leakage
+  d) Cylinder seal bypass
+  e) Relief valve set too low or stuck open
+
+Step-by-step procedure:
+  1. Check pressure filter differential pressure gauge (mounted on filter
+     housing). Replace filter if DP exceeds 35 PSI.
+     - Pressure filter part: PKR-15CN-110
+     - Return filter part: PKR-15CN-210
+  2. Check system pressure at gauge PG-HP4xx-01 (main manifold).
+     - Normal operating: 2200-2500 PSI
+     - If below 1800 PSI, proceed to step 3.
+  3. Check relief valve setting:
+     - Isolate press (LOTO per LP-007).
+     - Remove relief valve cap and adjust with Allen wrench.
+     - Factory setting: 3000 PSI (do not exceed).
+     - If relief valve is stuck, replace: Part PFM-RV-400.
+  4. Check main pump case drain flow:
+     - Install flow meter on case drain line.
+     - Acceptable: < 2 GPM at 2500 PSI.
+     - If case drain > 3 GPM, pump is worn — schedule replacement.
+  5. Check servo valve leakage:
+     - Command servo to null (0V signal from PLC).
+     - Measure leakage at cylinder ports with valve in null.
+     - Acceptable: < 0.5 GPM at 2500 PSI.
+     - If excessive, replace servo valve: MOOG-D634-319C.
+  6. Check cylinder seals:
+     - Extend cylinder fully and hold pressure.
+     - Monitor pressure drop: should hold within 50 PSI over 5 minutes.
+     - If pressure drops rapidly, internal bypass — replace rod/piston seals.
+
+5.2 SLOW CYCLE TIME (ALM-H005)
+
+Probable Causes:
+  a) Low oil viscosity (oil too hot)
+  b) Pump flow reduced (wear or cavitation)
+  c) Accumulator precharge low
+  d) Tooling interference or misalignment
+  e) VFD limiting motor speed
+
+Step-by-step procedure:
+  1. Check oil temperature: should be 70-130°F.
+     - If above 130°F, see Section 5.3 (oil overheating).
+  2. Check accumulator precharge:
+     - Relieve system pressure to zero.
+     - Connect nitrogen gauge to accumulator gas valve.
+     - Precharge should be 1500 PSI (+/- 50 PSI).
+     - Recharge with dry nitrogen if low.
+  3. Monitor pump flow at test port TP-HP4xx-01:
+     - Expected flow at 1800 RPM: 20-23 GPM.
+     - If below 18 GPM, pump volumetric efficiency is degraded.
+  4. Check for tooling binding:
+     - Remove workpiece and run press empty.
+     - If cycle time normalizes, issue is with tooling/die alignment.
+     - Check die guide pins and bushings for wear.
+  5. Verify pump motor speed:
+     - Across-the-line start: confirm 1770-1790 RPM with tachometer.
+     - Check motor current: should be < nameplate FLA.
+
+5.3 OIL CONTAMINATION / OVERHEATING (ALM-H002)
+
+Probable Causes:
+  a) Oil cooler fouled or inadequate cooling water
+  b) Oil degradation from moisture or particulate
+  c) Internal leakage generating excess heat
+  d) Ambient temperature too high
+
+Step-by-step procedure:
+  1. Check oil temperature at reservoir thermometer and compare to PLC reading
+     (AI-HP4xx-TMP, WIKA A-10 transmitter).
+  2. Verify cooling water flow from pump P-203 circuit:
+     - Check inlet temperature at oil cooler: should be < 85°F.
+     - Check flow rate: minimum 10 GPM through oil cooler.
+     - If P-203 is down, oil temperature will rise rapidly — reduce press
+       speed or stop until cooling is restored.
+  3. Take oil sample and send to lab for analysis:
+     - Particle count: target ISO 18/16/13 (servo valve requirement).
+     - Water content: < 500 ppm.
+     - Viscosity: ISO VG 46 (+/- 10% of new oil value).
+     - Acid number: < 2.0 mg KOH/g.
+  4. If oil is contaminated:
+     - Run portable kidney loop filter (3 micron) for 24 hours.
+     - Re-sample and test before returning to production.
+     - If water content > 1000 ppm, drain and replace oil completely.
+  5. Check reservoir breather filter (PKR-BB2-06): replace if dirty.
+
+5.4 POSITION ERRORS (ALM-H004)
+
+Probable Causes:
+  a) Temposonics transducer failure or drift
+  b) Servo valve calibration drift
+  c) PLC analog output error
+  d) Mechanical interference preventing full stroke
+  e) Air in hydraulic circuit
+
+Step-by-step procedure:
+  1. Check Temposonics transducer reading on HMI diagnostic screen.
+     - Compare to manual measurement of ram position.
+     - If readings disagree, recalibrate transducer:
+       a. Move ram to known position (bottom of stroke = 0.000").
+       b. Zero transducer output in PLC (parameter HP4xx_POS_ZERO).
+       c. Move to full stroke and set span (HP4xx_POS_SPAN).
+  2. Check servo valve command vs. actual position:
+     - On HMI, view servo valve diagnostic page.
+     - Command should track position within +/- 0.003".
+     - If hunting or oscillating, adjust PID gains:
+       HP4xx_PID_P (proportional, default 2.5)
+       HP4xx_PID_I (integral, default 0.8)
+       HP4xx_PID_D (derivative, default 0.1)
+  3. Bleed air from hydraulic circuit:
+     - Open bleed valves BV-HP4xx-01 (cylinder top) and BV-HP4xx-02 (bottom).
+     - Cycle press slowly at low pressure (500 PSI) 10 times.
+     - Close bleed valves when oil flows without bubbles.
+  4. Check PLC analog output module:
+     - Measure signal at AO-HP4xx-SV with multimeter.
+     - At 0% command: should read 0.00V (+/- 0.05V).
+     - At 100% command: should read +10.00V (+/- 0.05V).
+     - If outside tolerance, replace analog module (1769-OF4).
+
+
+6. SAFETY PROCEDURES AND LOCKOUT/TAGOUT
+--------------------------------------------------------------------------------
+
+6.1 LOCKOUT/TAGOUT (LOTO) PROCEDURE
+
+Reference: Facility Procedure LP-007 — Energy Control Program
+
+Energy Sources for HP-400 Series:
+  Source                  | Location              | Isolation Device
+  ------------------------|-----------------------|--------------------
+  Electrical (460V 3ph)   | MCC Bucket HP-4xx     | Circuit breaker CB-HP4xx
+  Hydraulic pressure      | Main manifold         | Manual dump valve DV-HP4xx
+  Pneumatic (if equipped) | Air supply header     | Ball valve BV-AIR-HP4xx
+  Gravity (ram)           | Ram/platen            | Mechanical block MB-HP4xx
+  Stored energy (accum.)  | Accumulator           | Manual bleed valve ABV-HP4xx
+
+LOTO Sequence:
+  1. Notify all affected personnel of impending lockout.
+  2. Place press in "Setup" mode on HMI and press E-stop.
+  3. Open and lock circuit breaker CB-HP4xx at MCC. Apply personal lock and tag.
+  4. Verify zero voltage at motor terminal box with voltmeter.
+  5. Open manual dump valve DV-HP4xx to relieve hydraulic pressure.
+  6. Verify pressure gauge PG-HP4xx-01 reads 0 PSI.
+  7. Bleed accumulator: open manual bleed valve ABV-HP4xx. Verify gauge at
+     accumulator reads 0 PSI on hydraulic side.
+  8. Install mechanical ram block MB-HP4xx between upper and lower platens.
+  9. If pneumatic diverters are present, close and lock BV-AIR-HP4xx.
+  10. Attempt to start press from HMI — confirm no response (try-start).
+
+LOTO Removal Sequence:
+  1. Inspect work area: all tools removed, guards in place.
+  2. Verify all personnel are clear of the press.
+  3. Remove mechanical ram block MB-HP4xx.
+  4. Close manual dump valve DV-HP4xx.
+  5. Close accumulator bleed valve ABV-HP4xx.
+  6. Remove personal lock and tag from CB-HP4xx.
+  7. Close circuit breaker CB-HP4xx.
+  8. Reset E-stop on press.
+  9. Perform test cycle in "Setup" mode (slow speed, reduced pressure).
+
+6.2 SAFEGUARDING SYSTEMS
+
+HP-401 (Forming Press):
+  - Fixed perimeter guarding with interlocked access gate.
+  - Gate interlock: Allen-Bradley 440G-MT Guard Locking Switch.
+  - Gate must be closed and locked before auto cycle can start.
+  - Gate lock release only when ram is at top-of-stroke and pressure is zero.
+
+HP-402 (Stamping Press):
+  - Light curtain: Allen-Bradley GuardShield 450L, Type 4, Category 4.
+  - Resolution: 14mm (finger detection).
+  - Blanking: None configured (full beam field active).
+  - Muting: Not applicable (no automated infeed).
+  - Dual palm button: Both buttons pressed within 0.5 seconds to initiate cycle.
+  - Anti-tie-down: Buttons must be released between cycles.
+
+
+7. PREVENTIVE MAINTENANCE SCHEDULE
+--------------------------------------------------------------------------------
+
+Task                                    | Interval    | Procedure
+----------------------------------------|-------------|---------------------------
+Visual inspection (leaks, guards)       | Daily       | Checklist WD-HP400
+Oil level check                         | Daily       | Sight glass on reservoir
+Oil temperature monitoring              | Continuous  | PLC trend AI-HP4xx-TMP
+Pressure filter DP check                | Weekly      | Gauge on filter housing
+Safety system function test             | Weekly      | Light curtain, E-stops
+Cylinder rod inspection (scoring/pitting)| Monthly    | Visual with flashlight
+Accumulator precharge check             | Quarterly   | Nitrogen gauge
+Oil sample and lab analysis             | Quarterly   | Send to lab
+Servo valve null bias check             | Semi-annual | PLC diagnostic screen
+Temposonics calibration verification    | Semi-annual | Manual measurement
+Hydraulic hose inspection               | Semi-annual | Check for bulging/cracks
+Oil change (complete)                   | Annually    | Drain, flush, refill
+Cylinder seal replacement (planned)     | 36 months   | Full rod & piston seal kit
+Pump rebuild or replacement             | 48 months   | Based on case drain test
+Accumulator bladder replacement         | 48 months   | Or based on precharge test
+
+
+8. SPARE PARTS LIST
+--------------------------------------------------------------------------------
+
+Part Number         | Description                      | Qty/Press | Lead Time
+--------------------|----------------------------------|-----------|----------
+PKR-PV046-NM        | Main pump, Parker PV046          | 1         | 12 weeks
+PKR-PGP505          | Charge pump, Parker PGP505       | 1         | 4 weeks
+MOOG-D634-319C      | Servo valve, Moog D634           | 1         | 8 weeks
+PFM-RSK-400-10      | Rod seal kit, 10" cylinder       | 1         | 3 weeks
+PFM-RSK-400-08      | Rod seal kit, 8" cylinder        | 1         | 3 weeks
+PFM-PSK-400-10      | Piston seal kit, 10" cylinder    | 1         | 3 weeks
+PFM-PSK-400-08      | Piston seal kit, 8" cylinder     | 1         | 3 weeks
+PFM-WPR-400-10      | Rod wiper, 10"                   | 2         | 1 week
+PFM-WPR-400-08      | Rod wiper, 8"                    | 2         | 1 week
+PKR-15CN-110        | Pressure filter element          | 2         | 1 week
+PKR-15CN-210        | Return filter element            | 2         | 1 week
+PKR-BB2-06          | Breather filter                  | 1         | 1 week
+PKR-A4-3100-3G      | Accumulator bladder kit          | 1         | 4 weeks
+LVJ-L150-28         | Coupling spider, Lovejoy L-150   | 2         | 1 week
+PFM-RV-400          | Relief valve assembly            | 1         | 4 weeks
+TEMP-R-SERIES-18    | Temposonics transducer, 18" stroke| 1        | 6 weeks
+TEMP-R-SERIES-12    | Temposonics transducer, 12" stroke| 1        | 6 weeks
+WIKA-A10-5000       | Pressure transducer, 0-5000 PSI  | 2         | 2 weeks
+
+Recommended stocking levels (on-site):
+  - Filter elements (pressure and return): 4 each
+  - Rod wiper kits: 2 per cylinder size
+  - Seal kits (rod + piston): 1 set per press
+  - Servo valve: 1 (critical spare, long lead time)
+  - Coupling spiders: 4
+  - Breather filters: 4
+
+Hydraulic Oil:
+  - Type: Mobil DTE 25 (ISO VG 46, anti-wear hydraulic oil)
+  - Reservoir fill: 120 gal (HP-401), 80 gal (HP-402)
+  - Annual consumption estimate: 250 gallons total (both presses)
+  - Storage: Indoor, sealed drums, away from contamination sources
+
+================================================================================
+                         END OF DOCUMENT MAN-HP400-REV03
+================================================================================

@@ -1,0 +1,311 @@
+================================================================================
+              BELT CONVEYOR SYSTEM CV-300 SERIES OPERATIONS GUIDE
+                        Document No: MAN-CV300-REV02
+                        Revision: 02 | Date: 2024-09-20
+                        Classification: Internal Use Only
+================================================================================
+
+1. SCOPE AND PURPOSE
+--------------------------------------------------------------------------------
+This guide covers the installation, operation, and maintenance of the CV-300
+series belt conveyor systems at the Greenfield Manufacturing Facility. The
+CV-300 series comprises three conveyor lines integrated into the production
+workflow and controlled by Siemens S7-1500 and Allen-Bradley CompactLogix PLCs.
+
+Related documents:
+  - PLC Controls Reference (DOC-PLC-500-REV03)
+  - Pump Maintenance Manual (MAN-P200-REV04) — P-203 cooling for CV-303
+  - Hydraulic Press Manual (MAN-HP400-REV03) — HP-401 feed integration
+
+
+2. EQUIPMENT SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+Tag     | Service          | Length (ft) | Width (in) | Speed (ft/min) | Motor HP
+--------|------------------|-------------|------------|----------------|--------
+CV-301  | Main Production  | 120         | 36         | 60-180         | 10
+CV-302  | Packaging Line   | 80          | 24         | 30-120         | 5
+CV-303  | Sorting Line     | 60          | 30         | 45-150         | 7.5
+
+General Specifications (all models):
+  - Manufacturer: ConveyPro Systems, Series CPX-300
+  - Belt Type: 2-ply polyester/nylon, SBR rubber cover
+  - Belt Thickness: 3/8" (CV-301, CV-303) / 1/4" (CV-302)
+  - Belt Rating: 330 PIW (pounds per inch width)
+  - Frame: Carbon steel, powder-coated RAL 5015 (blue)
+  - Idler Spacing: 4 ft (carrying side) / 10 ft (return side)
+  - Trough Angle: 20° (CV-301) / flat (CV-302, CV-303)
+  - Maximum Load: 150 lbs/ft (CV-301), 80 lbs/ft (CV-302), 100 lbs/ft (CV-303)
+  - Operating Temperature: -5°C to 60°C ambient
+
+Drive Configuration:
+  - Motor: WEG W22 Premium Efficiency, TEFC
+  - Gearbox: SEW-Eurodrive R87 helical gear reducer
+  - Ratio: 25:1 (CV-301) / 40:1 (CV-302) / 30:1 (CV-303)
+  - VFD: Siemens SINAMICS G120C (all conveyors)
+  - Communication: PROFINET to Siemens S7-1500 PLC
+
+CV-301 Integration Notes:
+  - Feeds directly into hydraulic press HP-401 forming station.
+  - Infeed sensor DI-CV301-01 triggers HP-401 press cycle via PLC interlock.
+  - Emergency stop of HP-401 also stops CV-301 (hardwired E-stop chain).
+
+CV-303 Integration Notes:
+  - Sorting line equipped with 3x diverter gates (pneumatic, 80 psi).
+  - Cooling provided by pump P-203 via heat exchanger HX-CV303-01.
+  - Vision system camera (Cognex IS7200) at station CV303-CAM-01.
+
+
+3. COMPONENT BREAKDOWN
+--------------------------------------------------------------------------------
+
+3.1 Belt Assembly
+  - Part: CPX-BELT-36 (36" width) / CPX-BELT-24 / CPX-BELT-30
+  - Splice type: Vulcanized finger splice (factory) / mechanical Flexco SR
+  - Minimum pulley diameter: 16" (head/tail) / 8" (snub)
+  - Belt tracking adjustment: Crown on head pulley + adjustable snub rollers
+
+3.2 Rollers and Idlers
+  - Carrying idlers: CPX-IDL-C36 / CPX-IDL-C24 / CPX-IDL-C30
+  - Return idlers: CPX-IDL-R36 / CPX-IDL-R24 / CPX-IDL-R30
+  - Impact idlers (loading zone): CPX-IDL-IMP-36 (CV-301 only)
+  - Bearing type: 6205-2RS sealed ball bearing
+  - Idler shell: ERW steel tube, 5" diameter
+
+3.3 Drive Motor and Gearbox
+  - Motor: WEG W22 (see specs in Section 2)
+  - Gearbox: SEW R87 DRE series with torque arm mount
+  - Gearbox oil: SEW GearOil CLP 220, capacity 3.5 liters
+  - Oil change interval: 12 months or 10,000 operating hours
+
+3.4 Belt Tensioner
+  - Type: Screw take-up (CV-302) / Gravity take-up (CV-301, CV-303)
+  - Gravity counterweight: 350 lbs (CV-301) / 250 lbs (CV-303)
+  - Take-up travel: 36" maximum
+  - Part: CPX-TU-GRAV-300 (gravity) / CPX-TU-SCREW-300 (screw)
+
+3.5 Sensors and Instrumentation
+  - Belt speed sensor: Honeywell 942-A4M-2D (magnetic pickup)
+    Part: HON-942-A4M | Mounted on tail pulley
+  - Belt misalignment switch: 4B Touchswitch TS-300
+    Part: 4B-TS300 | Mounted both sides at head and tail
+  - Pull-cord E-stop: Allen-Bradley 440E Lifeline 4
+    Part: AB-440E-LL4 | Every 50 ft along conveyor
+  - Load cell (CV-301): HBM PW15AH, 500 kg capacity
+    Part: HBM-PW15AH | Mounted at weigh frame station
+  - Photoelectric sensor (product detect): Banner Q45 series
+    Part: BAN-Q45-18 | At load zone and discharge
+  - Proximity sensors (diverter gates, CV-303): IFM IF5343
+    Part: IFM-IF5343 | 2 per gate (open/close confirmation)
+
+3.6 Variable Frequency Drive (VFD)
+  - Model: Siemens SINAMICS G120C, frame size FSC
+  - Power ratings: 10HP (CV-301), 5HP (CV-302), 7.5HP (CV-303)
+  - Control mode: Vector control with encoder feedback
+  - Communication: PROFINET IO with 2-port switch
+  - Parameters configured per PLC Controls Reference, Appendix B
+
+
+4. ALARM CODES
+--------------------------------------------------------------------------------
+
+Code      | Description                          | Severity | Action
+----------|--------------------------------------|----------|------------------
+ALM-C001  | Belt misalignment — head end          | Warning  | Adjust tracking
+ALM-C002  | Belt misalignment — tail end          | Warning  | Adjust tracking
+ALM-C003  | Drive motor overtemperature            | Critical | Stop conveyor
+ALM-C004  | Belt speed deviation (>10% from SP)    | Warning  | Check belt slip
+ALM-C005  | E-stop activated                      | Critical | Investigate
+ALM-C006  | VFD fault (general)                   | Critical | Check VFD code
+
+VFD Sub-Fault Codes (displayed on SINAMICS G120C):
+  - F07801: Motor overcurrent
+  - F07802: Motor stall detected
+  - F07900: Drive overtemperature
+  - F30001: PROFINET communication loss (see PLC Reference, Section 6)
+  - F30002: Encoder signal lost
+
+Alarm routing: Conveyor alarms are mapped to the Siemens S7-1500 PLC via
+PROFINET. HMI display on Siemens TP1500 Comfort Panel at operator station
+OS-CV300. Critical alarms trigger the area beacon (red strobe + horn).
+
+For HMI alarm display configuration, see PLC Controls Reference, Section 5.
+
+
+5. TROUBLESHOOTING PROCEDURES
+--------------------------------------------------------------------------------
+
+5.1 BELT TRACKING / MISALIGNMENT (ALM-C001, ALM-C002)
+
+Probable Causes:
+  a) Uneven loading on belt
+  b) Material buildup on rollers or pulleys
+  c) Belt splice not square
+  d) Idler misalignment
+  e) Take-up not centered
+
+Step-by-step procedure:
+  1. Observe belt tracking while running at low speed (30 ft/min).
+  2. Inspect for material buildup on head pulley, snub rollers, and return
+     idlers. Clean with scraper if buildup found.
+  3. Check that all carrying idlers are level and square to belt centerline.
+     Use a string line along the conveyor frame as reference.
+  4. Adjust snub rollers at head or tail:
+     - Belt drifting right: move roller right end forward (in direction of travel).
+     - Belt drifting left: move roller left end forward.
+     - Adjust in 1/8" increments, wait 3 full belt revolutions between changes.
+  5. Verify belt splice is square: measure diagonals across splice — should
+     be equal within 1/4".
+  6. Confirm take-up (gravity or screw) is centered and free to move.
+  7. If belt continues to mistrack after all adjustments, belt may be
+     damaged or stretched unevenly — schedule belt replacement.
+
+5.2 MOTOR FAULTS (ALM-C003, VFD sub-faults)
+
+Probable Causes:
+  a) Motor overload due to belt jam or material buildup
+  b) VFD parameter drift or corruption
+  c) Motor winding degradation
+  d) Insufficient cooling airflow
+
+Step-by-step procedure:
+  1. Check VFD display panel for specific fault code (F-codes listed above).
+  2. For F07801 (overcurrent):
+     - Inspect belt for jams or excessive material accumulation.
+     - Check that discharge chute is not blocked.
+     - Verify VFD current limit parameter (P0640) is set to 150% FLA.
+  3. For F07900 (drive overtemperature):
+     - Check VFD cooling fan operation.
+     - Verify ambient temperature in drive cabinet < 40°C.
+     - Clean VFD heatsink fins with compressed air.
+  4. For F30001 (PROFINET loss):
+     - Check PROFINET cable connections at VFD and PLC.
+     - Verify network switch status (see PLC Reference, Section 6).
+     - Ping VFD IP address from engineering workstation.
+     - VFD IP addresses: CV-301: 192.168.1.31, CV-302: 192.168.1.32,
+       CV-303: 192.168.1.33
+  5. If motor winding fault suspected, perform insulation resistance test
+     (megger) — minimum 50 Megohms at 500V DC.
+  6. Reset VFD fault by cycling control power or pressing RESET on keypad.
+     If fault recurs within 3 attempts, escalate to electrical maintenance.
+
+5.3 SENSOR FAILURES
+
+5.3.1 Belt Speed Sensor Failure
+  - Symptom: Speed reading = 0 while belt is running, or erratic readings.
+  - Check: Gap between sensor and target wheel (0.5-1.5mm).
+  - Check: Sensor cable for damage or disconnection at terminal block TB-CV3xx.
+  - Verify: 24VDC supply at sensor (measure at TB-CV3xx terminals 1 & 2).
+  - Replace: Part HON-942-A4M, recalibrate PPR setting in PLC.
+
+5.3.2 Belt Misalignment Switch
+  - Symptom: False ALM-C001/C002 while belt is tracking correctly.
+  - Check: Switch lever arm free movement, not stuck by debris.
+  - Check: Switch contacts with multimeter (NC contact should read closed).
+  - Adjust: Switch mounting position — lever should contact belt edge at
+    1" deviation from centerline.
+  - Replace: Part 4B-TS300 if contacts are worn.
+
+5.3.3 Photoelectric Sensor (Product Detect)
+  - Symptom: Missed product detection or false triggers.
+  - Check: Sensor lens for dust or debris — clean with soft cloth.
+  - Check: Reflector alignment (retroreflective type).
+  - Adjust: Sensitivity potentiometer on sensor body.
+  - Verify: 24VDC supply and output signal at PLC input module.
+
+5.4 SPEED DEVIATIONS (ALM-C004)
+
+Probable Causes:
+  a) Belt slippage on drive pulley
+  b) VFD speed reference signal error
+  c) Gearbox failure (internal gear wear)
+  d) Motor slip exceeding nameplate
+
+Step-by-step procedure:
+  1. Compare VFD output frequency to speed sensor feedback.
+  2. If VFD output matches setpoint but belt speed is low:
+     - Inspect drive pulley rubber lagging for wear (replace if <1/8" thick).
+     - Check belt tension: gravity take-up should move freely; screw take-up
+       should be adjusted to eliminate slip (belt sag between idlers: 2-3%).
+  3. If VFD output does not match speed reference:
+     - Check analog speed reference signal from PLC (4-20mA at AO-CV3xx-01).
+     - Verify VFD analog input scaling (P2000-P2003).
+  4. Check gearbox oil level and condition:
+     - Oil should be clear amber; milky = water contamination.
+     - Dark/burnt = overheating; metallic particles = gear wear.
+     - If gear wear suspected, schedule gearbox replacement.
+
+
+6. PREVENTIVE MAINTENANCE SCHEDULE
+--------------------------------------------------------------------------------
+
+Task                                    | Interval    | Procedure
+----------------------------------------|-------------|---------------------------
+Visual inspection (belt, frame, guards) | Daily       | Checklist WD-CV300
+Belt tracking check                     | Daily       | Observe during startup
+Sensor function verification            | Weekly      | Test each sensor type
+Belt tension check                      | Weekly      | Check sag & take-up
+Drive motor temperature check           | Weekly      | IR thermometer
+Roller and idler inspection             | Monthly     | Spin by hand, check noise
+Belt edge wear inspection               | Monthly     | Measure edge condition
+VFD fan and heatsink cleaning           | Monthly     | Compressed air
+Gearbox oil level check                 | Monthly     | Sight glass / dipstick
+Lubrication — take-up bearings          | Quarterly   | Mobil Polyrex EM grease
+Lubrication — all pillow block bearings | Quarterly   | Mobil Polyrex EM grease
+Belt splice inspection                  | Quarterly   | Visual + pull test
+Gearbox oil change                      | Annually    | SEW GearOil CLP 220
+Drive pulley lagging inspection         | Annually    | Measure thickness
+Full belt replacement                   | 36 months   | Or based on condition
+Comprehensive electrical inspection     | Annually    | Megger + thermography
+
+
+7. SPARE PARTS LIST
+--------------------------------------------------------------------------------
+
+Part Number       | Description                        | Qty/Conv | Lead Time
+------------------|------------------------------------|----------|----------
+CPX-BELT-36       | Belt, 2-ply, 36" x 250 ft roll     | 1        | 4 weeks
+CPX-BELT-24       | Belt, 2-ply, 24" x 170 ft roll     | 1        | 4 weeks
+CPX-BELT-30       | Belt, 2-ply, 30" x 130 ft roll     | 1        | 4 weeks
+CPX-IDL-C36       | Carrying idler, 36"                 | 30       | 2 weeks
+CPX-IDL-C24       | Carrying idler, 24"                 | 20       | 2 weeks
+CPX-IDL-C30       | Carrying idler, 30"                 | 15       | 2 weeks
+CPX-IDL-R36       | Return idler, 36"                   | 12       | 2 weeks
+CPX-IDL-IMP-36    | Impact idler, 36"                   | 4        | 3 weeks
+HON-942-A4M       | Belt speed sensor                   | 3        | 1 week
+4B-TS300          | Belt misalignment switch             | 6        | 1 week
+AB-440E-LL4       | Pull-cord E-stop assembly            | 6        | 2 weeks
+BAN-Q45-18        | Photoelectric sensor                 | 4        | 1 week
+IFM-IF5343        | Proximity sensor (CV-303 gates)      | 6        | 1 week
+HBM-PW15AH        | Load cell, 500 kg (CV-301)           | 1        | 3 weeks
+SEW-R87-OIL       | Gearbox oil kit, CLP 220, 5L         | 1        | 1 week
+CPX-LAG-16        | Drive pulley lagging kit, 16" pulley | 1        | 3 weeks
+CPX-TU-GRAV-300   | Gravity take-up assembly             | 1        | 6 weeks
+
+Recommended stocking levels (on-site):
+  - Carrying idlers: 10 per belt width
+  - Return idlers: 4 per belt width
+  - Speed sensors: 2
+  - Misalignment switches: 4
+  - E-stop assemblies: 2
+  - Photoelectric sensors: 2
+
+
+8. SAFETY INFORMATION
+--------------------------------------------------------------------------------
+
+  - Never reach under a running conveyor belt. All work on belt, rollers,
+    or drive requires LOTO per facility procedure LP-007.
+  - Pull-cord E-stops are located every 50 ft. Know the nearest E-stop
+    location before working near any conveyor.
+  - Conveyor guards must be in place during operation. Do not bypass guard
+    interlocks (Allen-Bradley 440G-MT Guard Locking Switch).
+  - Pinch points exist at head pulley, tail pulley, snub rollers, and
+    take-up. Maintain 24" clearance zone.
+  - CV-301 is interlocked with hydraulic press HP-401. Verify both systems
+    are in safe state before performing maintenance on either.
+  - Maximum walking speed near conveyors: normal pace. No running.
+
+================================================================================
+                         END OF DOCUMENT MAN-CV300-REV02
+================================================================================

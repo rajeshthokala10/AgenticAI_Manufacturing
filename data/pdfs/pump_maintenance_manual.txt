@@ -1,0 +1,315 @@
+================================================================================
+              CENTRIFUGAL PUMP P-200 SERIES MAINTENANCE MANUAL
+                        Document No: MAN-P200-REV04
+                        Revision: 04 | Date: 2024-11-15
+                        Classification: Internal Use Only
+================================================================================
+
+1. SCOPE AND PURPOSE
+--------------------------------------------------------------------------------
+This manual provides maintenance procedures, troubleshooting guidelines, and
+spare parts information for the P-200 series centrifugal pumps installed at the
+Greenfield Manufacturing Facility. All maintenance personnel must review this
+document before performing any service on P-200 series equipment.
+
+Related documents:
+  - PLC Controls Reference (DOC-PLC-500-REV03)
+  - Conveyor System Guide (MAN-CV300-REV02) — see Section 7 for P-203 cooling
+  - Hydraulic Press Manual (MAN-HP400-REV03)
+
+
+2. EQUIPMENT SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+Model    | Service           | Flow (GPM) | Head (ft) | Motor HP | Speed (RPM)
+---------|-------------------|------------|-----------|----------|------------
+P-201    | Process Water     | 150        | 95        | 25       | 1770
+P-202    | Chemical Feed     | 75         | 120       | 15       | 3550
+P-203    | Cooling Circuit   | 200        | 80        | 30       | 1770
+
+General Specifications (all models):
+  - Manufacturer: FlowTech Industries, Model FT-Series 200
+  - Casing Material: 316 Stainless Steel (P-202: Hastelloy C-276)
+  - Impeller Type: Enclosed, back-swept vanes
+  - Seal Type: John Crane Type 2100 cartridge mechanical seal
+  - Bearing Type: SKF 6310-2RS deep groove ball bearings
+  - Coupling: Rexnord Omega E30 elastomeric coupling
+  - Suction Connection: 6" ANSI 150 RF flange
+  - Discharge Connection: 4" ANSI 150 RF flange
+  - Operating Temperature Range: -10°C to 120°C
+  - Maximum Allowable Working Pressure: 150 psig
+
+Motor Specifications:
+  - Manufacturer: WEG W22 Premium Efficiency
+  - Enclosure: TEFC (Totally Enclosed Fan Cooled)
+  - Voltage: 460V / 3-phase / 60Hz
+  - Insulation Class: F
+  - Service Factor: 1.15
+  - Frame: 284T (P-201, P-203) / 254T (P-202)
+
+Note: P-203 provides cooling water to conveyor system CV-303 sorting line
+heat exchangers and to hydraulic press HP-401 oil cooler circuit.
+
+
+3. COMPONENT BREAKDOWN
+--------------------------------------------------------------------------------
+
+3.1 Impeller Assembly
+  - Part: FT-IMP-200-SS (316SS) / FT-IMP-200-HC (Hastelloy, P-202 only)
+  - Diameter: 10.5" (P-201), 8.75" (P-202), 11.0" (P-203)
+  - Vane count: 6
+  - Wear rings: FT-WR-200-F (front) / FT-WR-200-R (rear)
+  - Impeller nut: FT-NUT-200, torque to 85 ft-lbs
+
+3.2 Mechanical Seal
+  - Type: John Crane 2100 Single Cartridge
+  - Part No: JC-2100-1.750 (1.750" shaft)
+  - Seal face: Silicon Carbide vs. Carbon
+  - Elastomers: Viton (standard) / EPDM (P-201 water service)
+  - Flush Plan: API Plan 11 (P-201, P-203) / API Plan 32 (P-202)
+  - Flush pressure: 15-25 psi above suction pressure
+
+3.3 Bearing Housing Assembly
+  - Housing: FT-BH-200 cast iron housing
+  - Inboard bearing: SKF 6310-2RS (Part: SKF-6310-2RS)
+  - Outboard bearing: SKF 6311-2RS (Part: SKF-6311-2RS)
+  - Lubricant: Mobil Polyrex EM grease
+  - Oil capacity (if oil-lubricated variant): 1.2 liters
+  - Bearing temperature limit: 180°F (82°C) continuous
+
+3.4 Coupling
+  - Type: Rexnord Omega E30 elastomeric
+  - Part No: REX-E30-28 (28mm bore)
+  - Element: REX-E30-ELEM (polyurethane, orange — Shore 80A)
+  - Alignment tolerance: 0.005" parallel, 0.5° angular
+  - Torque rating: 450 ft-lbs maximum
+
+3.5 Motor
+  - See Section 2 for motor specifications
+  - Motor-to-pump alignment is critical; see Section 6.3
+  - VFD controlled: P-201 (Siemens G120C, 25HP)
+  - Across-the-line start: P-202, P-203
+  - Motor PLC I/O mapped in PLC Controls Reference, Section 4
+
+
+4. ALARM CODES
+--------------------------------------------------------------------------------
+
+Code      | Description                          | Severity | Action
+----------|--------------------------------------|----------|------------------
+ALM-P001  | High vibration — inboard bearing      | Warning  | Check alignment
+ALM-P002  | High vibration — outboard bearing      | Warning  | Check bearing
+ALM-P003  | Seal leak detected (flush flow low)    | Critical | Stop pump
+ALM-P004  | Bearing temperature high (>170°F)      | Warning  | Reduce load
+ALM-P005  | Bearing temperature critical (>190°F)  | Critical | Stop pump
+ALM-P006  | Low discharge pressure                 | Warning  | Check suction
+ALM-P007  | Motor overcurrent (>FLA)               | Critical | Stop pump
+ALM-P008  | Suction pressure low (cavitation risk) | Warning  | Throttle discharge
+
+Alarm routing: All alarms are transmitted via PROFINET to the Siemens S7-1500
+PLC (CPU 1516-3) and displayed on the Comfort Panel HMI (TP1500). Critical
+alarms trigger audible annunciator and SMS notification via MPI gateway.
+
+For PLC alarm configuration details, see PLC Controls Reference, Section 5.
+
+
+5. TROUBLESHOOTING PROCEDURES
+--------------------------------------------------------------------------------
+
+5.1 HIGH VIBRATION (ALM-P001, ALM-P002)
+
+Probable Causes:
+  a) Misalignment between pump and motor
+  b) Worn or damaged bearings
+  c) Impeller imbalance (erosion, debris)
+  d) Cavitation
+  e) Loose foundation bolts
+
+Step-by-step procedure:
+  1. Record vibration levels using portable analyzer (CSI 2140 or equivalent).
+     - Acceptable: < 0.15 in/s velocity (overall)
+     - Warning: 0.15 — 0.30 in/s
+     - Critical: > 0.30 in/s
+  2. Check foundation bolts for proper torque (3/4" bolts: 150 ft-lbs).
+  3. Perform laser alignment check using Fixturlaser NXA Pro.
+     - Parallel tolerance: 0.005"
+     - Angular tolerance: 0.5°
+  4. If alignment is within tolerance, check bearing condition:
+     - Measure bearing temperature with IR thermometer.
+     - Listen for bearing noise using stethoscope.
+     - If defective, replace per Section 6.2.
+  5. If bearings are acceptable, inspect impeller:
+     - Remove casing cover per Section 6.1.
+     - Check impeller for erosion, pitting, or debris.
+     - Replace impeller if wear exceeds 1/16" on vane edges.
+
+5.2 SEAL LEAKAGE (ALM-P003)
+
+Probable Causes:
+  a) Seal face wear (normal end-of-life)
+  b) Thermal shock from dry running
+  c) Flush system malfunction
+  d) Shaft runout exceeding 0.002" TIR
+
+Step-by-step procedure:
+  1. Isolate pump: close suction and discharge valves.
+  2. Verify LOTO per facility procedure LP-007.
+  3. Inspect seal flush system:
+     - Verify flush flow: 1.5-2.0 GPM at gauge FG-P2xx-01.
+     - Verify flush pressure: 15-25 psi above suction.
+     - Clean strainer (Part: FT-STR-200) if clogged.
+  4. If flush system is functional, replace seal cartridge:
+     - Remove coupling guard and coupling half.
+     - Slide back gland plate (4x M12 bolts).
+     - Remove old cartridge and inspect shaft sleeve.
+     - Measure shaft runout with dial indicator (max 0.002" TIR).
+     - Install new JC-2100 cartridge per manufacturer instructions.
+     - Set seal compression: 3/16" gap on setting clips.
+     - Torque gland bolts to 25 ft-lbs in star pattern.
+
+5.3 LOW FLOW / LOW DISCHARGE PRESSURE (ALM-P006)
+
+Probable Causes:
+  a) Suction strainer clogged
+  b) Partially closed suction valve
+  c) Air entrainment in suction line
+  d) Worn impeller or wear rings
+  e) Reverse rotation (after motor work)
+
+Step-by-step procedure:
+  1. Verify suction valve is fully open.
+  2. Check suction strainer differential pressure (DP > 5 psi = clogged).
+  3. Check for air leaks at suction piping flanges and gauge connections.
+  4. Verify rotation direction: viewed from motor end, CCW for all P-200 pumps.
+  5. Measure wear ring clearance:
+     - Acceptable: 0.010 — 0.015" diametral
+     - Replace at: > 0.025" diametral
+  6. If impeller is worn beyond tolerance, replace per Section 6.1.
+
+5.4 OVERHEATING (ALM-P004, ALM-P005)
+
+Probable Causes:
+  a) Insufficient lubrication
+  b) Over-greasing (grease churning)
+  c) Misalignment causing excessive bearing load
+  d) Ambient temperature exceeding design
+  e) Cooling water flow loss (P-203: check valve CV-P203-CW)
+
+Step-by-step procedure:
+  1. Immediately reduce pump load or stop pump if temperature exceeds 190°F.
+  2. Check grease fill level: bearings should be 1/3 full.
+  3. If over-greased, remove drain plug and run pump briefly to purge excess.
+  4. Verify bearing housing is not insulated by debris or dirt buildup.
+  5. Check alignment per Section 5.1 step 3.
+  6. For P-203: verify cooling water supply from plant header is flowing.
+
+5.5 CAVITATION (ALM-P008)
+
+Probable Causes:
+  a) Insufficient NPSH available
+  b) Suction lift too high
+  c) Fluid temperature above design (reduced NPSH margin)
+  d) Suction line restrictions
+
+Step-by-step procedure:
+  1. Measure suction pressure at gauge PG-P2xx-S1.
+  2. Calculate NPSHa and compare to NPSHr:
+     - P-201 NPSHr: 8 ft at BEP
+     - P-202 NPSHr: 12 ft at BEP
+     - P-203 NPSHr: 9 ft at BEP
+  3. Ensure NPSHa exceeds NPSHr by minimum 3 ft margin.
+  4. Check suction strainer for blockage.
+  5. Verify fluid temperature is within design range.
+  6. If cavitation persists, consider throttling discharge to reduce flow.
+
+
+6. MAINTENANCE PROCEDURES AND INTERVALS
+--------------------------------------------------------------------------------
+
+6.1 PREVENTIVE MAINTENANCE SCHEDULE
+
+Task                                  | Interval   | Procedure
+--------------------------------------|------------|---------------------------
+Visual inspection and leak check      | Daily      | Walk-down checklist WD-P200
+Vibration reading (portable)          | Weekly     | Record in CMMS
+Bearing temperature check             | Weekly     | IR thermometer
+Seal flush flow verification          | Weekly     | Check gauge FG-P2xx-01
+Coupling element inspection           | Monthly    | Visual, check for cracking
+Suction strainer cleaning             | Monthly    | Isolate, remove, clean
+Lubrication (grease bearings)         | Quarterly  | 2 pumps Mobil Polyrex EM
+Alignment check                       | Semi-annual| Laser alignment
+Seal replacement (planned)            | 18 months  | Full cartridge swap
+Bearing replacement (planned)         | 24 months  | Both inboard & outboard
+Full overhaul (casing, impeller)      | 48 months  | Complete disassembly
+
+6.2 BEARING REPLACEMENT PROCEDURE
+
+  1. Perform LOTO per facility procedure LP-007.
+  2. Disconnect motor leads and coupling.
+  3. Remove bearing housing end caps (4x M10 bolts each).
+  4. Extract bearings using SKF TMMA 100 puller kit.
+  5. Inspect shaft for scoring or wear.
+  6. Clean housing bore with lint-free cloth and solvent.
+  7. Heat new bearings to 110°C using SKF TIH 030m induction heater.
+  8. Install bearings with marked side facing outward.
+  9. Pack with Mobil Polyrex EM grease (1/3 cavity fill).
+  10. Reassemble and torque end cap bolts to 45 ft-lbs.
+  11. Verify shaft rotates freely by hand.
+  12. Reconnect coupling and perform laser alignment.
+
+6.3 ALIGNMENT PROCEDURE
+
+  1. Ensure pump and motor are at operating temperature (warm alignment).
+  2. Mount Fixturlaser NXA Pro brackets on coupling hubs.
+  3. Rotate shafts and record readings at 12, 3, 6, 9 o'clock.
+  4. Calculate corrections for front and rear motor feet.
+  5. Add or remove shims (stainless steel shim stock only).
+  6. Re-measure and confirm within tolerance:
+     - Parallel: 0.005" maximum
+     - Angular: 0.5° maximum
+  7. Torque motor hold-down bolts to 120 ft-lbs.
+  8. Perform soft-foot check (max 0.002" lift per foot).
+
+
+7. SPARE PARTS LIST
+--------------------------------------------------------------------------------
+
+Part Number       | Description                        | Qty/Pump | Lead Time
+------------------|------------------------------------|----------|----------
+FT-IMP-200-SS     | Impeller, 316SS                    | 1        | 8 weeks
+FT-IMP-200-HC     | Impeller, Hastelloy C-276          | 1        | 12 weeks
+JC-2100-1.750     | Mechanical seal cartridge           | 1        | 2 weeks
+SKF-6310-2RS      | Inboard bearing                    | 1        | 1 week
+SKF-6311-2RS      | Outboard bearing                   | 1        | 1 week
+REX-E30-ELEM      | Coupling element, polyurethane      | 1        | 1 week
+FT-WR-200-F       | Front wear ring                    | 1        | 4 weeks
+FT-WR-200-R       | Rear wear ring                     | 1        | 4 weeks
+FT-NUT-200        | Impeller nut                       | 1        | 2 weeks
+FT-STR-200        | Suction strainer screen             | 1        | 1 week
+FT-GSK-200-C      | Casing gasket, spiral wound         | 1        | 1 week
+FT-BH-200         | Bearing housing assembly            | 1        | 6 weeks
+FT-SLV-200        | Shaft sleeve, 316SS                 | 1        | 4 weeks
+
+Recommended stocking levels (on-site):
+  - Mechanical seal cartridges: 2 per pump model
+  - Bearings (both sizes): 4 sets
+  - Coupling elements: 3 per pump
+  - Wear ring sets: 2 per pump model
+  - Casing gaskets: 4 per pump model
+
+
+8. SAFETY INFORMATION
+--------------------------------------------------------------------------------
+
+  - Always perform Lockout/Tagout (LOTO) per procedure LP-007 before any
+    maintenance activity.
+  - P-202 handles chemical fluids — wear appropriate PPE including chemical-
+    resistant gloves, face shield, and acid-resistant apron.
+  - Verify zero energy state before opening any casing or piping.
+  - Do not operate pumps with coupling guard removed.
+  - Maximum casing temperature during operation: 120°C — use caution.
+  - Report any seal leaks immediately to shift supervisor and environmental.
+
+================================================================================
+                         END OF DOCUMENT MAN-P200-REV04
+================================================================================

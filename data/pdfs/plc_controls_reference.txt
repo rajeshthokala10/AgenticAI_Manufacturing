@@ -1,0 +1,513 @@
+================================================================================
+             PLC & CONTROLS REFERENCE — ALL MANUFACTURING EQUIPMENT
+                        Document No: DOC-PLC-500-REV03
+                        Revision: 03 | Date: 2024-12-01
+                        Classification: Internal Use Only
+================================================================================
+
+1. SCOPE AND PURPOSE
+--------------------------------------------------------------------------------
+This document serves as the central controls reference for all PLC-controlled
+manufacturing equipment at the Greenfield Manufacturing Facility. It covers
+controller hardware, communication networks, fault codes, HMI alarm management,
+and network troubleshooting procedures.
+
+Equipment covered:
+  - Centrifugal Pumps P-200 Series (MAN-P200-REV04)
+  - Belt Conveyors CV-300 Series (MAN-CV300-REV02)
+  - Hydraulic Presses HP-400 Series (MAN-HP400-REV03)
+
+Network architecture summary:
+  - Primary PLC: Siemens S7-1500 (pumps, conveyors)
+  - Secondary PLC: Allen-Bradley CompactLogix 5380 (hydraulic presses)
+  - Gateway: Siemens-AB EtherNet/IP to PROFINET gateway
+  - SCADA: Ignition by Inductive Automation, Version 8.1
+
+
+2. CONTROLLER SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+2.1 Siemens S7-1500 System
+
+CPU: Siemens 1516-3 PN/DP (6ES7 516-3AN02-0AB0)
+  - Work Memory: 2 MB program / 5 MB data
+  - Cycle Time: < 10 ms typical
+  - Firmware: V2.9
+  - IP Address: 192.168.1.1
+  - PROFINET Device Name: PLC-S7-MAIN
+
+I/O Modules (installed in Rack 0):
+  Slot | Module                         | Order No.          | Function
+  -----|--------------------------------|--------------------|------------------------
+  1    | CPU 1516-3 PN/DP               | 6ES7 516-3AN02     | Main processor
+  2    | DI 32x24VDC                    | 6ES7 521-1BL00     | Pump/conveyor digital in
+  3    | DI 32x24VDC                    | 6ES7 521-1BL00     | Safety inputs (E-stops)
+  4    | DO 32x24VDC/0.5A               | 6ES7 522-1BL10     | Pump/conveyor outputs
+  5    | AI 8x16bit                     | 6ES7 531-7KF00     | Analog inputs (4-20mA)
+  6    | AO 4x16bit                     | 6ES7 532-5HD00     | Analog outputs (4-20mA)
+  7    | CM PROFINET                    | 6GK7 543-1AX00     | Additional PROFINET port
+
+Remote I/O (ET 200SP at pump station):
+  - IM 155-6 PN/2 interface module (6ES7 155-6AU01-0BN0)
+  - IP Address: 192.168.1.10
+  - PROFINET Device Name: ET200SP-PUMPS
+  - DI 16x24VDC (6ES7 131-6BH01-0BA0) — pump status, alarms
+  - DO 16x24VDC/0.5A (6ES7 132-6BH01-0BA0) — pump start/stop commands
+  - AI 4x16bit (6ES7 134-6GD01-0BA1) — pressure, temperature, flow
+
+Programming Software: TIA Portal V18
+Project File: GreenField_Main_V18.ap18
+Safety Program: F-CPU integrated, SIL 2 certified
+
+2.2 Allen-Bradley CompactLogix 5380 System
+
+CPU: CompactLogix 5380 (1769-L33ER)
+  - Memory: 3 MB program / 1 MB I/O
+  - Firmware: V33.011
+  - IP Address: 192.168.2.1
+  - EtherNet/IP Slot: Built-in dual-port
+
+I/O Modules (in local chassis):
+  Slot | Module              | Catalog No.    | Function
+  -----|---------------------|----------------|----------------------------
+  0    | 1769-L33ER          | CPU            | Main processor
+  1    | 1769-IQ32           | DI 32-point    | Press digital inputs
+  2    | 1769-OB32           | DO 32-point    | Press digital outputs
+  3    | 1769-IF4            | AI 4-channel   | Analog inputs (pressure, temp)
+  4    | 1769-OF4            | AO 4-channel   | Analog outputs (servo valve)
+  5    | 1769-IQ16           | DI 16-point    | Safety inputs (E-stop, guards)
+
+Programming Software: Studio 5000 Logix Designer V33
+Project File: HP400_Press_Control_V33.ACD
+Safety Program: GuardLogix (dedicated safety controller 1756-L73S shared rack)
+
+2.3 Inter-PLC Communication Gateway
+
+The Siemens S7-1500 and Allen-Bradley CompactLogix systems communicate through
+a protocol gateway to coordinate operations between the conveyor and press
+systems.
+
+Gateway: HMS Anybus X-gateway (AB7632)
+  - Side A: PROFINET IO (connects to S7-1500)
+    IP Address: 192.168.1.50
+    Device Name: GW-PROFINET
+  - Side B: EtherNet/IP Adapter (connects to CompactLogix)
+    IP Address: 192.168.2.50
+
+Data exchanged through gateway:
+  Tag Name (S7-1500 side)      | Tag Name (AB side)           | Description
+  -----------------------------|------------------------------|------------------
+  GW_CV301_Running             | CV301_Status.Running         | CV-301 run status
+  GW_CV301_Speed               | CV301_Status.Speed           | CV-301 belt speed
+  GW_CV301_PartDetect          | CV301_Status.PartPresent     | Part at discharge
+  GW_HP401_Ready               | HP401_Status.Ready           | HP-401 ready signal
+  GW_HP401_CycleComplete       | HP401_Status.CycleDone       | Press cycle done
+  GW_HP401_Fault               | HP401_Status.Fault           | HP-401 fault active
+  GW_EStop_Chain               | Safety.EStopChain            | E-stop daisy chain
+
+Gateway refresh rate: 10 ms
+Watchdog timeout: 500 ms (triggers ALM-H010 and stops both systems)
+
+
+3. COMMUNICATION PROTOCOLS
+--------------------------------------------------------------------------------
+
+3.1 PROFINET (Siemens Side)
+
+Network: 192.168.1.0/24
+Switch: Siemens SCALANCE X208 (8-port managed switch)
+  - IP Address: 192.168.1.254
+  - Web interface: http://192.168.1.254
+
+PROFINET Device List:
+  Device Name         | IP Address     | Type              | Equipment
+  --------------------|----------------|-------------------|------------------
+  PLC-S7-MAIN         | 192.168.1.1    | IO Controller     | S7-1500 CPU
+  ET200SP-PUMPS       | 192.168.1.10   | IO Device         | Pump station I/O
+  VFD-P201            | 192.168.1.21   | IO Device         | Pump P-201 VFD
+  VFD-CV301           | 192.168.1.31   | IO Device         | Conveyor CV-301 VFD
+  VFD-CV302           | 192.168.1.32   | IO Device         | Conveyor CV-302 VFD
+  VFD-CV303           | 192.168.1.33   | IO Device         | Conveyor CV-303 VFD
+  HMI-TP1500          | 192.168.1.40   | HMI               | Operator panel
+  GW-PROFINET         | 192.168.1.50   | IO Device         | Anybus gateway
+  SCALANCE-X208       | 192.168.1.254  | Network switch    | Managed switch
+
+Cable: Cat6A shielded, Industrial Ethernet (IE) connectors.
+Topology: Star from SCALANCE X208.
+Redundancy: MRP (Media Redundancy Protocol) ring — secondary path through
+port 7 and port 8 on SCALANCE X208.
+
+3.2 EtherNet/IP (Allen-Bradley Side)
+
+Network: 192.168.2.0/24
+Switch: Stratix 5700 (Allen-Bradley / Cisco) 8-port managed
+  - IP Address: 192.168.2.254
+  - Web interface: http://192.168.2.254
+
+EtherNet/IP Device List:
+  Device Name         | IP Address     | Type              | Equipment
+  --------------------|----------------|-------------------|------------------
+  PLC-AB-PRESS        | 192.168.2.1    | Scanner           | CompactLogix CPU
+  HMI-PV7-HP401       | 192.168.2.10   | HMI               | PanelView HP-401
+  HMI-PV7-HP402       | 192.168.2.11   | HMI               | PanelView HP-402
+  GW-ETHERNET-IP      | 192.168.2.50   | Adapter           | Anybus gateway
+  SERVO-HP401         | 192.168.2.61   | I/O               | Moog valve (via AO)
+  SERVO-HP402         | 192.168.2.62   | I/O               | Moog valve (via AO)
+  STRATIX-5700        | 192.168.2.254  | Network switch    | Managed switch
+
+Cable: Cat6A shielded with RJ45 industrial connectors.
+Topology: Star from Stratix 5700.
+CIP Safety: Enabled for GuardLogix safety I/O (SNN configured per device).
+
+3.3 Network Interconnection
+
+The two networks (PROFINET 192.168.1.x and EtherNet/IP 192.168.2.x) are
+physically separated. The only connection between them is the HMS Anybus
+X-gateway, which translates between PROFINET IO and EtherNet/IP at the
+application layer. There is no IP routing between the networks.
+
+SCADA Connection:
+  - Ignition SCADA server connects to both networks via dual NIC:
+    NIC1: 192.168.1.100 (PROFINET network)
+    NIC2: 192.168.2.100 (EtherNet/IP network)
+  - Ignition uses OPC-UA for S7-1500 and EtherNet/IP driver for CompactLogix.
+  - SCADA data historian: 90-day rolling storage, 1-second resolution.
+
+
+4. COMMON FAULT CODES
+--------------------------------------------------------------------------------
+
+The following fault codes are system-level codes generated by the PLC programs
+and displayed on HMI panels. Equipment-specific alarm codes (ALM-Pxxx,
+ALM-Cxxx, ALM-Hxxx) are defined in their respective equipment manuals.
+
+Code    | Source      | Description                              | Action
+--------|-------------|------------------------------------------|------------------
+FC-001  | S7-1500     | CPU watchdog timeout                     | Restart CPU
+FC-002  | S7-1500     | PROFINET device lost (any device)        | Check cables
+FC-003  | S7-1500     | Analog input out of range (wire break)   | Check transmitter
+FC-004  | S7-1500     | Safety program error (F-CPU)             | Check safety I/O
+FC-005  | CompactLogix| CPU major fault (unrecoverable)          | Download program
+FC-006  | CompactLogix| EtherNet/IP connection timeout           | Check cables
+FC-007  | CompactLogix| Analog module channel fault              | Check wiring
+FC-008  | Gateway     | PROFINET-to-EtherNet/IP comm loss        | Check gateway
+FC-009  | SCADA       | OPC-UA connection lost to S7-1500        | Check NIC1
+FC-010  | SCADA       | EtherNet/IP driver lost to CompactLogix  | Check NIC2
+
+Fault Code Details:
+
+FC-001: CPU Watchdog Timeout
+  - The S7-1500 CPU scan cycle exceeded the configured watchdog time (150 ms).
+  - Cause: Excessive program complexity, recursive loops, or I/O delay.
+  - Resolution:
+    1. Check CPU diagnostic buffer via TIA Portal online:
+       Online & Diagnostics > Diagnostic Buffer.
+    2. Identify the OB (Organization Block) causing delay.
+    3. If caused by communication delay, check PROFINET network (see Section 6).
+    4. Restart CPU from TIA Portal or by cycling power.
+    5. If recurrent, optimize program scan or increase watchdog time (max 500 ms).
+
+FC-002: PROFINET Device Lost
+  - A configured PROFINET IO device is not responding.
+  - Cause: Cable fault, device power loss, device firmware crash, IP conflict.
+  - Resolution:
+    1. Identify which device is lost: TIA Portal > Online > Accessible Devices.
+    2. Check physical cable connection at the device.
+    3. Ping device IP from engineering workstation.
+    4. If device is a VFD, check VFD power supply and control board.
+    5. If device was replaced, assign PROFINET device name using PRONETA tool.
+    6. See Section 6 for detailed network troubleshooting.
+
+FC-003: Analog Input Out of Range
+  - A 4-20mA input reads below 3.5mA (wire break detection) or above 21mA.
+  - Cause: Transmitter failure, broken wire, loose terminal, incorrect scaling.
+  - Resolution:
+    1. Identify channel from PLC diagnostic (Module > Channel diagnostics).
+    2. Measure current at terminal block with loop calibrator.
+    3. If 0mA: wiring is broken — trace and repair.
+    4. If signal is present but PLC reads error: check module configuration
+       in TIA Portal (measurement range, diagnostics enabled).
+    5. Replace transmitter if signal is erratic (see equipment manual for part).
+
+FC-005: CompactLogix CPU Major Fault
+  - Unrecoverable fault requiring program re-download.
+  - Cause: Memory corruption, firmware bug, power glitch during write.
+  - Resolution:
+    1. Connect with Studio 5000 via USB or Ethernet.
+    2. Go Online > Controller Properties > view fault details.
+    3. Clear fault: Controller Properties > Major Faults > Clear.
+    4. If fault persists, download project: Communications > Download.
+    5. Reconfigure date/time and verify I/O mapping after download.
+    6. Test press operation in Setup mode before returning to Auto.
+
+FC-008: Gateway Communication Loss
+  - The Anybus X-gateway is not passing data between PROFINET and EtherNet/IP.
+  - Cause: Gateway power loss, firmware hang, configuration corruption.
+  - Resolution:
+    1. Check gateway status LEDs:
+       - Module Status (MS): Green = OK, Red = Fault, Off = No power.
+       - Network Status A (NS-A): Green = PROFINET connected.
+       - Network Status B (NS-B): Green = EtherNet/IP connected.
+    2. If MS is Red: cycle power on gateway (24VDC supply).
+    3. If NS-A is off: check PROFINET cable to SCALANCE switch.
+    4. If NS-B is off: check EtherNet/IP cable to Stratix switch.
+    5. If gateway was replaced, reconfigure using Anybus Configuration Manager:
+       - Import configuration file: GW_AB7632_Config_V3.cfg
+       - Set IP addresses: Side A = 192.168.1.50, Side B = 192.168.2.50.
+       - Map data tags per Section 2.3 gateway data table.
+    6. After gateway recovery, verify interlock signals:
+       - CV-301 running status visible on HP-401 HMI.
+       - HP-401 ready status visible on CV-300 operator station.
+
+
+5. HMI ALARM MANAGEMENT
+--------------------------------------------------------------------------------
+
+5.1 Siemens TP1500 Comfort Panel (Pumps & Conveyors)
+
+  - Model: Siemens TP1500 Comfort (6AV2 124-0QC02-0AX1)
+  - Screen: 15.4" widescreen TFT, 1280x800
+  - IP Address: 192.168.1.40
+  - Runtime: WinCC Comfort V18
+
+Alarm Classes:
+  Class      | Color   | Acknowledgment | Logging
+  -----------|---------|----------------|--------
+  Critical   | Red     | Required       | Yes, with timestamp
+  Warning    | Yellow  | Auto-clear OK  | Yes, with timestamp
+  Information| Blue    | Auto-clear     | No
+
+Alarm Display Configuration:
+  - Active alarms shown in alarm banner at top of all screens.
+  - Alarm history: last 500 alarms stored in HMI buffer.
+  - Alarm export: CSV file to USB stick (Maintenance > Export Alarms).
+  - Alarm acknowledgment: Touch alarm line + press ACK button.
+  - Group acknowledgment: Not permitted for Critical class.
+
+Alarm Tag Mapping (pumps):
+  PLC Tag                  | HMI Alarm Text                        | Code
+  -------------------------|---------------------------------------|----------
+  P201_VIB_HI              | P-201: High vibration inboard bearing | ALM-P001
+  P201_VIB_HI_OB           | P-201: High vibration outboard bearing| ALM-P002
+  P201_SEAL_LEAK           | P-201: Seal leak detected             | ALM-P003
+  P201_BRG_TEMP_HI         | P-201: Bearing temperature high       | ALM-P004
+  P201_BRG_TEMP_CRIT       | P-201: Bearing temperature critical   | ALM-P005
+  P201_DISCH_PRESS_LO      | P-201: Low discharge pressure         | ALM-P006
+  P201_MOTOR_OC            | P-201: Motor overcurrent              | ALM-P007
+  P201_SUCT_PRESS_LO       | P-201: Suction pressure low           | ALM-P008
+  (Repeat pattern for P-202, P-203 with respective tags)
+
+Alarm Tag Mapping (conveyors):
+  PLC Tag                  | HMI Alarm Text                        | Code
+  -------------------------|---------------------------------------|----------
+  CV301_MISALIGN_HEAD      | CV-301: Belt misalignment head end    | ALM-C001
+  CV301_MISALIGN_TAIL      | CV-301: Belt misalignment tail end    | ALM-C002
+  CV301_MOTOR_OVERTEMP     | CV-301: Drive motor overtemperature   | ALM-C003
+  CV301_SPEED_DEV          | CV-301: Belt speed deviation          | ALM-C004
+  CV301_ESTOP              | CV-301: E-stop activated              | ALM-C005
+  CV301_VFD_FAULT          | CV-301: VFD fault                     | ALM-C006
+  (Repeat pattern for CV-302, CV-303 with respective tags)
+
+5.2 Allen-Bradley PanelView Plus 7 (Hydraulic Presses)
+
+  - Model: PanelView Plus 7 Standard, 12" (2711P-T12C22D9P)
+  - Screen: 12.1" TFT, 800x600
+  - IP Address: 192.168.2.10 (HP-401) / 192.168.2.11 (HP-402)
+  - Runtime: FactoryTalk View ME V13
+
+Alarm Classes:
+  Class      | Color   | Acknowledgment | Logging
+  -----------|---------|----------------|--------
+  Critical   | Red     | Required       | Yes, to SD card
+  Warning    | Amber   | Auto-clear OK  | Yes, to SD card
+  Info       | Cyan    | Auto-clear     | No
+
+Alarm Display Configuration:
+  - Alarm banner at bottom of all screens (last 4 active alarms visible).
+  - Alarm summary screen: Press > Diagnostics > Alarm Summary.
+  - Historical alarms: Data Log > Alarm Log (SD card, 30-day retention).
+  - Alarm export: Remove SD card, read CSV files on PC.
+
+5.3 SCADA Alarm Integration (Ignition)
+
+All PLC alarms are mirrored to the Ignition SCADA system for centralized
+monitoring and historical analysis.
+
+  - Ignition Server: 192.168.1.100 / 192.168.2.100
+  - Web Client: http://192.168.1.100:8088/main/web/login
+  - Alarm Journal: SQL database (PostgreSQL), unlimited retention
+  - Alarm Notification Pipeline:
+    Priority 1 (Critical): SMS + email to on-call maintenance
+    Priority 2 (Warning): Email to maintenance supervisor
+    Priority 3 (Info): Logged only, no notification
+  - Alarm Shelving: Maintenance can shelve alarms for up to 8 hours via
+    SCADA client (requires Level 2 credentials).
+
+
+6. NETWORK TROUBLESHOOTING PROCEDURES
+--------------------------------------------------------------------------------
+
+6.1 PROFINET NETWORK TROUBLESHOOTING
+
+Symptom: FC-002 (PROFINET device lost) or intermittent communication.
+
+Step-by-step procedure:
+  1. Identify the lost device from S7-1500 diagnostic buffer.
+  2. Check SCALANCE X208 port status:
+     - Access switch web interface: http://192.168.1.254
+     - Navigate to: Information > Port Overview
+     - Check link status, speed, and error counters for each port.
+  3. Check cable continuity:
+     - Use Fluke DTX-1800 cable tester.
+     - Verify Cat6A performance (all pairs pass at 250 MHz).
+     - Check connector pins for corrosion or damage.
+  4. Verify device PROFINET name:
+     - Use Siemens PRONETA tool (free download) to scan network.
+     - Compare device name to TIA Portal project configuration.
+     - If name is missing (factory reset occurred), reassign name using PRONETA.
+  5. Check for IP address conflicts:
+     - Ping each device IP from engineering workstation.
+     - If two devices respond to same IP, resolve conflict in TIA Portal.
+  6. Check PROFINET timing:
+     - Send cycle: 4 ms (configured in TIA Portal).
+     - Watchdog: 12 ms (3x send cycle).
+     - If intermittent, increase watchdog to 20 ms as test.
+  7. Review SCALANCE error counters:
+     - CRC errors > 0: cable or connector problem.
+     - Alignment errors: possible duplex mismatch.
+     - Late collisions: network congestion or faulty device.
+
+6.2 EtherNet/IP NETWORK TROUBLESHOOTING
+
+Symptom: FC-006 (EtherNet/IP connection timeout) or intermittent communication.
+
+Step-by-step procedure:
+  1. Check Stratix 5700 port LEDs:
+     - Solid green: link up, no traffic errors.
+     - Flashing green: link up, traffic active.
+     - Amber: link up but port disabled or error.
+     - Off: no link.
+  2. Access Stratix 5700 web interface: http://192.168.2.254
+     - Check port statistics for error counts.
+  3. From CompactLogix, check connection status:
+     - Studio 5000 > I/O Configuration > Ethernet module.
+     - Connection status should show "Running."
+     - If "Faulted" or "Inhibited," check RPI (Requested Packet Interval).
+  4. Verify RPI settings:
+     - HMI connections: 100 ms RPI (standard).
+     - Gateway connection: 10 ms RPI (critical interlock data).
+     - Servo valve: 5 ms RPI (motion control performance).
+  5. Test connectivity:
+     - Ping from engineering workstation to each device.
+     - Expected latency: < 1 ms on local network.
+     - If latency > 5 ms, check for network congestion or cable issues.
+
+6.3 GATEWAY TROUBLESHOOTING (HMS Anybus X-gateway)
+
+Symptom: FC-008 (gateway communication loss) or data mismatch between PLCs.
+
+Step-by-step procedure:
+  1. Check gateway power supply: 24VDC at terminals (+/- 10%).
+  2. Check status LEDs (see FC-008 resolution in Section 4).
+  3. Verify data mapping is correct:
+     - Access Anybus Configuration Manager on engineering laptop.
+     - Connect via USB to gateway.
+     - Verify input/output byte mapping matches both PLC projects.
+  4. Check data integrity:
+     - From S7-1500 HMI: view GW_CV301_Running tag.
+     - From CompactLogix HMI: view CV301_Status.Running tag.
+     - Both should show same value. If mismatched, restart gateway.
+  5. If gateway requires firmware update:
+     - Current firmware: V2.15
+     - Update via Anybus Configuration Manager (USB connection).
+     - Backup configuration before updating.
+     - Re-verify data mapping after update.
+
+6.4 SCADA CONNECTION TROUBLESHOOTING
+
+Symptom: FC-009 or FC-010 (SCADA connection lost to PLC).
+
+Step-by-step procedure:
+  1. Verify Ignition gateway is running:
+     - Access: http://192.168.1.100:8088/web/status
+     - Check system status page for active connections.
+  2. For FC-009 (OPC-UA to S7-1500):
+     - In Ignition Designer, check OPC-UA connection status.
+     - Verify S7-1500 OPC-UA server is enabled (TIA Portal > CPU properties).
+     - Check NIC1 (192.168.1.100) is connected to PROFINET switch.
+     - Verify firewall rules allow TCP port 4840 (OPC-UA).
+  3. For FC-010 (EtherNet/IP to CompactLogix):
+     - In Ignition Designer, check Allen-Bradley driver status.
+     - Verify NIC2 (192.168.2.100) is connected to EtherNet/IP switch.
+     - Check CompactLogix connection limits (max 32 CIP connections).
+     - Reduce polling rate if connection count is near limit.
+  4. Restart Ignition OPC/driver module if connection does not recover:
+     - Gateway webpage > Config > OPC-UA > Restart.
+     - Or restart entire Ignition service (last resort).
+
+
+7. ENGINEERING WORKSTATION ACCESS
+--------------------------------------------------------------------------------
+
+Engineering Workstation: Dell Precision 5570
+  - OS: Windows 10 Enterprise LTSC 2021
+  - NIC1: 192.168.1.200 (PROFINET network, connected to SCALANCE X208)
+  - NIC2: 192.168.2.200 (EtherNet/IP network, connected to Stratix 5700)
+  - NIC3: Corporate LAN (for software updates and file transfer only)
+
+Installed Software:
+  - Siemens TIA Portal V18 (with STEP 7 Safety and WinCC)
+  - Rockwell Studio 5000 Logix Designer V33
+  - Rockwell FactoryTalk View Studio ME V13
+  - HMS Anybus Configuration Manager V2.5
+  - Siemens PRONETA V2.6 (network diagnostics)
+  - Ignition Designer V8.1
+  - Wireshark V4.0 (with PROFINET plugin)
+  - Fluke LinkWare PC V11 (cable test results management)
+
+Access Control:
+  - Engineering workstation login: domain credentials required.
+  - PLC programming access: Level 3 password (maintenance supervisor).
+  - HMI configuration: Level 2 password (maintenance technician).
+  - SCADA configuration: Ignition admin credentials (separate from domain).
+  - All program changes must be documented in change log (SharePoint).
+
+
+8. BACKUP AND RECOVERY
+--------------------------------------------------------------------------------
+
+Backup Schedule:
+  Item                        | Method                   | Frequency  | Location
+  ----------------------------|--------------------------|------------|----------
+  S7-1500 project             | TIA Portal archive       | Weekly     | NAS share
+  CompactLogix project        | Studio 5000 .ACD save    | Weekly     | NAS share
+  HMI TP1500 project          | WinCC Comfort archive    | Monthly    | NAS share
+  PanelView projects          | FactoryTalk ME export    | Monthly    | NAS share
+  Anybus gateway config       | Config Manager export    | Quarterly  | NAS share
+  Ignition gateway backup     | Ignition auto-backup     | Daily      | NAS share
+  SCADA tag database          | PostgreSQL dump          | Daily      | NAS share
+  Network switch configs      | TFTP backup              | Quarterly  | NAS share
+
+NAS: Synology RS1221+ (192.168.1.250, RAID 6, 48 TB usable)
+Off-site backup: Weekly replication to corporate data center.
+
+Recovery Procedure (S7-1500):
+  1. Open TIA Portal on engineering workstation.
+  2. Open latest archived project from NAS share.
+  3. Go Online with CPU (Connect > Online Access > PROFINET > PLC-S7-MAIN).
+  4. Download project: Online > Download to Device > Hardware and Software.
+  5. CPU will restart automatically.
+  6. Verify all PROFINET devices reconnect (should take < 30 seconds).
+  7. Test critical interlocks before returning equipment to service.
+
+Recovery Procedure (CompactLogix):
+  1. Open Studio 5000 on engineering workstation.
+  2. Open latest .ACD project file from NAS share.
+  3. Set communication path: Ethernet > 192.168.2.1 > Backplane > 0.
+  4. Download: Communications > Download.
+  5. Verify I/O connections recover (Module Properties > Connection tab).
+  6. Test press operation in Setup mode before returning to Auto.
+
+================================================================================
+                         END OF DOCUMENT DOC-PLC-500-REV03
+================================================================================
