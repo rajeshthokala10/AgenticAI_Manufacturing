@@ -803,7 +803,7 @@ in the conversational chat / one-command-stack refresh.
 
 ### Prerequisites
 
-- Python **3.10+**
+- Python **3.10+** _(macOS: `brew install python@3.12`; Ubuntu: `sudo apt install python3.12 python3.12-venv`)_
 - **Node.js 18+** and **npm 9+** _(only required for the Next.js web UI; `./run.sh` will skip
   it automatically if Node is missing, or set `SKIP_WEB=1`)_
 - macOS / Linux / WSL (Windows native works but is not tested)
@@ -811,6 +811,10 @@ in the conversational chat / one-command-stack refresh.
   modes; Quick Search and the chat agent in retrieval-only fallback run offline)
 - _Optional_: a local Ollama server with `qwen2.5:3b` pulled (for the cheap critic / classifier
   tier). Without Ollama the routing falls back to the OpenAI key.
+
+> **Fastest path on a fresh machine:** install Python 3.10+ and Node 18+, then run `./run.sh`.
+> The script does the venv, `pip install`, `.env` bootstrap, and `npm install` for you — steps 1-4
+> below are only needed if you want to do them manually.
 
 ### 1. Clone & enter the project
 
@@ -882,14 +886,37 @@ cp .env.example .env
 
 ### Option A — Full stack (recommended) — `./run.sh`
 
-Boots the FastAPI backend, the Streamlit analytical UI, and the Next.js chat UI in the background.
-First run also `npm install`s the web dependencies.
+`run.sh` is **self-bootstrapping**. On a fresh `git clone`, a single `./run.sh` will:
+
+1. Find (or install) a Python interpreter ≥ 3.10.
+2. Create `.venv/` and `pip install -r requirements.txt` _(skipped automatically if your
+   base Python already has every package)_.
+3. Copy `.env.example` → `.env` if you don't have one yet.
+4. Run `npm ci` (or `npm install`) inside `web/` so the Next.js UI builds.
+5. Start the FastAPI backend, Streamlit, and Next.js dev server in the background.
+
+Subsequent runs are fast — every install step is gated by a SHA marker of `requirements.txt` /
+`web/package-lock.json`, so repeats are sub-second when nothing has changed.
 
 ```bash
 ./run.sh        # api :8000 · streamlit :8501 · web :3000
-./status.sh     # health check across all three services
+./status.sh     # health + install state across all services
 ./stop.sh       # graceful TERM → KILL with port fallback
 ```
+
+**Fresh-machine prerequisites:** Python 3.10+ and Node 18+ on `PATH`. Everything else is auto-installed.
+
+**Useful flags for `run.sh`:**
+
+| Env var                                   | Effect                                                      |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| `INSTALL_ONLY=1`                          | Run the bootstrap steps (venv + pip + npm), don't start services. |
+| `SKIP_INSTALL=1`                          | Skip install probes entirely (use if you've set things up by hand). |
+| `USE_VENV=1`                              | Force venv creation even when your base Python already has the deps. |
+| `PYTHON_BIN=/path/to/python`              | Use a specific interpreter (must be ≥ 3.10).                |
+| `NODE_BIN=/path/to/node`                  | Use a specific Node binary.                                 |
+| `SKIP_WEB=1` / `SKIP_STREAMLIT=1`         | Don't launch the Next.js / Streamlit service.               |
+| `API_PORT` / `STREAMLIT_PORT` / `WEB_PORT`| Port overrides (defaults 8000 / 8501 / 3000).               |
 
 After `run.sh` reports **✅ Stack is up.**, open one of:
 

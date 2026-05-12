@@ -25,6 +25,26 @@ probe "api"       "http://localhost:$API_PORT/api/health"     "$API_PORT"       
 probe "streamlit" "http://localhost:$STREAMLIT_PORT/_stcore/health" "$STREAMLIT_PORT" "streamlit"
 probe "web"       "http://localhost:$WEB_PORT/"               "$WEB_PORT"       "web"
 
+echo
+echo "Install state:"
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  ver="$("$ROOT/.venv/bin/python" -c 'import sys;print(".".join(map(str,sys.version_info[:3])))' 2>/dev/null || echo "?")"
+  printf "  python venv  v%-7s  %s\n" "$ver" "$ROOT/.venv"
+else
+  printf "  python venv  -          (base Python in use; run.sh skipped venv)\n"
+fi
+if [[ -d "$ROOT/web/node_modules" ]]; then
+  pkgs="$(ls "$ROOT/web/node_modules" 2>/dev/null | wc -l | tr -d ' ')"
+  printf "  web/ deps    %-9s  (web/node_modules)\n" "${pkgs} pkgs"
+else
+  printf "  web/ deps    not installed (run: cd web && npm install)\n"
+fi
+if [[ -f "$ROOT/.env" ]]; then
+  printf "  .env         present\n"
+else
+  printf "  .env         missing\n"
+fi
+
 if [[ -d "$RUN_DIR/logs" ]]; then
   echo
   echo "Logs:"
