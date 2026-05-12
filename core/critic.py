@@ -1,6 +1,7 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
+from config import CRITIC_MODEL
 from core.llm_client import call_llm
 
 
@@ -49,6 +50,7 @@ Any claim not supported by the evidence is a hallucination."""
         user_prompt=user_prompt,
         temperature=0.1,
         max_tokens=500,
+        model=CRITIC_MODEL,
     )
 
     return _parse_critic_response(response, attempt)

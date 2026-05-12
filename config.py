@@ -14,6 +14,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+
+# Tiered model routing — strong models for user-facing answers, local Qwen for auxiliary tasks
+ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gpt-4o")
+CRITIC_MODEL = os.getenv("CRITIC_MODEL", "qwen2.5:3b")
+RETRY_MODEL = os.getenv("RETRY_MODEL", "gpt-4o")
+CLASSIFY_MODEL = os.getenv("CLASSIFY_MODEL", "qwen2.5:3b")
+DIRECT_LLM_MODEL = os.getenv("DIRECT_LLM_MODEL", "gpt-4o-mini")
+CLASSICAL_RAG_MODEL = os.getenv("CLASSICAL_RAG_MODEL", "gpt-4o-mini")
+
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 64
 TOP_K_RETRIEVAL = 10

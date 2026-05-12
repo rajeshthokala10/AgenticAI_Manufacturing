@@ -1,7 +1,7 @@
 import time
 from typing import Dict, List, Optional
 
-from config import MAX_CRITIC_RETRIES, TOP_K_RERANK
+from config import MAX_CRITIC_RETRIES, TOP_K_RERANK, ANSWER_MODEL, RETRY_MODEL
 from core.query_formatter import format_query
 from core.knowledge_graph import KnowledgeGraph
 from core.retrieval.hybrid_retriever import HybridRetriever
@@ -77,6 +77,7 @@ Provide a comprehensive, evidence-grounded answer. Cite sources for every claim.
         llm_result = call_llm_with_metrics(
             system_prompt=ANSWER_SYSTEM_PROMPT,
             user_prompt=user_prompt,
+            model=ANSWER_MODEL,
         )
         gen_time = (time.time() - gen_start) * 1000
 
@@ -113,6 +114,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
                 retry_result = call_llm_with_metrics(
                     system_prompt=RETRY_SYSTEM_PROMPT.format(critic_feedback=feedback),
                     user_prompt=retry_prompt,
+                    model=RETRY_MODEL,
                 )
                 answer = retry_result["response"]
                 llm_result["prompt_tokens"] += retry_result["prompt_tokens"]
@@ -128,6 +130,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
             "query": {
                 "original": raw_query,
                 "formatted": formatted,
+                "intent_classification": formatted.get("intent_metadata", {}),
             },
             "answer": answer,
             "evidence": retrieved_chunks,
