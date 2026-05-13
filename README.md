@@ -50,14 +50,15 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 9. [Clarifier Agent & Query Correction](#clarifier-agent--query-correction)
 10. [Conversational Chat & Deployment](#conversational-chat--deployment)
 11. [Critic Loop State Machine](#critic-loop-state-machine)
-12. [Directory Structure](#directory-structure)
-13. [Setup & Installation](#setup--installation)
-14. [Running the Application](#running-the-application)
-15. [Configuration](#configuration)
-16. [Sample Queries](#sample-queries)
-17. [Pipeline Comparison](#pipeline-comparison)
-18. [Troubleshooting](#troubleshooting)
-19. [What Changed in the Unification](#what-changed-in-the-unification)
+12. [Models & LLM Routing](#models--llm-routing)
+13. [Directory Structure](#directory-structure)
+14. [Setup & Installation](#setup--installation)
+15. [Running the Application](#running-the-application)
+16. [Configuration](#configuration)
+17. [Sample Queries](#sample-queries)
+18. [Pipeline Comparison](#pipeline-comparison)
+19. [Troubleshooting](#troubleshooting)
+20. [What Changed in the Unification](#what-changed-in-the-unification)
 
 ---
 
@@ -108,11 +109,11 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 | Web UI (primary)   | **Next.js 14** (App Router, TypeScript) + **Tailwind CSS** + `react-markdown` |
 | Analytics UI       | Streamlit + Plotly (6 tabs)                                      |
 | HTTP API           | **FastAPI** + **uvicorn** + Pydantic                             |
-| LLM                | OpenAI (`gpt-4o`, `gpt-4o-mini`) + Ollama (`qwen2.5:3b`)         |
+| LLMs               | **OpenAI** `gpt-4o` (answer/retry) + `gpt-4o-mini` (baselines) — and **Ollama** `qwen2.5:3b` (critic + classifier).  See [Models & LLM Routing](#models--llm-routing). |
 | Vector store       | FAISS (default) — ChromaDB optional                              |
 | Sparse retrieval   | `rank-bm25` _(pure-Python fallback bundled in-tree)_             |
 | Knowledge graph    | NetworkX (DiGraph)                                               |
-| Embeddings         | Sentence-Transformers (`all-MiniLM-L6-v2`)                       |
+| Embeddings         | Sentence-Transformers `all-MiniLM-L6-v2` (384-dim)               |
 | Data ingestion     | `pdfplumber`, `openpyxl`, `pandas`                               |
 | Orchestration      | `run.sh` / `stop.sh` / `status.sh` (PID + log management in `.run/`) |
 | Language           | Python 3.10+, Node.js 18+                                        |
@@ -706,6 +707,135 @@ CONFIDENCE: 0.0 – 1.0
 ISSUES: <list or "None">
 SUGGESTION: <how to fix on retry>
 ```
+
+---
+
+## Models & LLM Routing
+
+The system uses **five purpose-tuned models** instead of one generalist. Strong cloud models do
+the user-facing reasoning; cheap local models handle auxiliary work (intent / critic / classifier)
+so token spend stays on the critical path.
+
+### Models in active use (default configuration)
+
+| Role / env var          | Model                | Provider                 | Where it runs in code                                  | Notes |
+| ----------------------- | -------------------- | ------------------------ | ------------------------------------------------------ | ----- |
+| `ANSWER_MODEL`          | `gpt-4o`             | **OpenAI** (cloud)       | `core/orchestrator.py` — first-pass diagnostic answer  | Strong reasoning + citations |
+| `RETRY_MODEL`           | `gpt-4o`             | **OpenAI** (cloud)       | `core/orchestrator.py` — regenerate after critic FAIL  | Used at most `MAX_CRITIC_RETRIES` times |
+| `CRITIC_MODEL`          | `qwen2.5:3b`         | **Ollama** (local)       | `core/critic.py` — grades grounding / safety / citations | Free, ~50ms per evaluation |
+| `CLASSIFY_MODEL`        | `qwen2.5:3b`         | **Ollama** (local)       | LLM-assisted intent classification (fallback path)     | Regex classifier handles most queries first |
+| `DIRECT_LLM_MODEL`      | `gpt-4o-mini`        | **OpenAI** (cloud)       | `comparison/direct_llm.py` — no-retrieval baseline     | For Comparison tab only |
+| `CLASSICAL_RAG_MODEL`   | `gpt-4o-mini`        | **OpenAI** (cloud)       | `comparison/classical_rag.py` — FAISS-only baseline    | For Comparison tab only |
+| `LLM_MODEL` _(legacy)_  | `gpt-4o-mini`        | **OpenAI** (cloud)       | Legacy fallback when tiered routing is bypassed        | Rarely hit on new code paths |
+| `EMBEDDING_MODEL`       | `all-MiniLM-L6-v2`   | **Sentence-Transformers** (local) | `doc_pipeline/embeddings.py` + `chunking.py`     | 384-dim, used for both indexing and semantic chunking |
+
+All values come from `config.py` defaults and can be overridden in `.env`.
+
+### Per-mode model usage
+
+| Mode                  | Models invoked per query                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| **Quick Search**      | **none** — pure FAISS + embeddings, fully offline                                        |
+| **Diagnostic Copilot**| `gpt-4o` (answer) → `qwen2.5:3b` (critic) → optional `gpt-4o` (retry, up to `MAX_CRITIC_RETRIES`) |
+| **Chat (default)**    | Same as Diagnostic, with `qwen2.5:3b` optionally classifying intent ahead of retrieval   |
+| **Classical RAG**     | `gpt-4o-mini`                                                                            |
+| **Direct LLM**        | `gpt-4o-mini`                                                                            |
+
+The headline cost saving is the critic loop: every diagnostic answer is **graded by a free local
+model** before it leaves the server. OpenAI tokens are only spent on draft + (occasional) retry.
+
+### Provider routing
+
+Both providers are served through the OpenAI SDK by exploiting Ollama's OpenAI-compatible HTTP
+endpoint:
+
+```mermaid
+flowchart LR
+    R["model name<br/>e.g. 'gpt-4o' or 'qwen2.5:3b'"] --> D{name matches<br/>OLLAMA_MODELS<br/>or qwen/llama/phi/mistral?}
+    D -- yes --> O["OpenAI SDK<br/>base_url=$OLLAMA_BASE_URL<br/>api_key='ollama'"]
+    D -- no  --> C["OpenAI SDK<br/>api_key=$OPENAI_API_KEY"]
+    O --> H["http://localhost:11434/v1"]
+    C --> X["https://api.openai.com/v1"]
+```
+
+```4:37:core/llm_client.py
+from openai import OpenAI
+
+from config import OPENAI_API_KEY, LLM_MODEL, OLLAMA_BASE_URL
+
+_openai_client = None
+_ollama_client = None
+
+OLLAMA_MODELS = {"qwen2.5:3b", "qwen2.5:1.5b", "qwen2.5:7b", "llama3.2:3b", "phi3:3.8b", "mistral:7b"}
+
+# ... pricing table omitted ...
+
+def _is_local_model(model: str) -> bool:
+    return model in OLLAMA_MODELS or model.startswith(("qwen", "llama", "phi", "mistral:"))
+
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
+
+
+def _get_ollama_client():
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
+    return _ollama_client
+```
+
+### Switching models
+
+Everything is `.env`-driven. Some practical swaps:
+
+```bash
+# 100% OpenAI (no Ollama dependency)
+CRITIC_MODEL=gpt-4o-mini
+CLASSIFY_MODEL=gpt-4o-mini
+
+# 100% local (no OpenAI charges; Ollama-only)
+ANSWER_MODEL=qwen2.5:7b
+RETRY_MODEL=qwen2.5:7b
+DIRECT_LLM_MODEL=qwen2.5:3b
+CLASSICAL_RAG_MODEL=qwen2.5:3b
+# (leave OPENAI_API_KEY blank — Quick Search and Chat still work as retrieval-only)
+
+# Use a different embedding model — must rebuild the FAISS index after changing this
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+```
+
+The `OLLAMA_MODELS` set in `core/llm_client.py` plus the `qwen/llama/phi/mistral:` name-prefix
+heuristic decide which provider handles a given model name. Any model name that doesn't match the
+local list (`qwen2.5:*`, `llama3.2:*`, `phi3:*`, `mistral:*`) is sent to OpenAI.
+
+### Setup checklist
+
+- **OpenAI** — set `OPENAI_API_KEY` in `.env`. Without it, Diagnostic / Chat-with-LLM / Comparison
+  modes fall back to retrieval-only.
+- **Ollama** — install [Ollama](https://ollama.com), then:
+  ```bash
+  ollama pull qwen2.5:3b      # the default critic + classifier
+  ollama serve                # listens on :11434
+  ```
+  Without Ollama, set `CRITIC_MODEL=gpt-4o-mini` (or any OpenAI model) so the critic loop falls
+  back to the cloud.
+
+### LLM cost / latency profile (Diagnostic mode, defaults)
+
+| Phase             | Model         | Typical latency | Typical cost |
+| ----------------- | ------------- | --------------- | ------------ |
+| Answer (draft)    | `gpt-4o`      | ~1.5–3 s        | ~$0.005      |
+| Critic            | `qwen2.5:3b`  | ~50–250 ms      | $0 (local)   |
+| Retry _(if FAIL)_ | `gpt-4o`      | ~1.5–3 s        | ~$0.005      |
+| Embeddings        | MiniLM-L6     | ~10 ms / 1k chars | $0 (local) |
+| **Total**         | _per query_   | **~2–6 s**      | **~$0.005–0.010** |
+
+The exact numbers depend on prompt length, network conditions, and how often the critic forces a
+retry; see the **🔄 Architecture & Cost** tab in the Streamlit UI for live projections.
 
 ---
 
