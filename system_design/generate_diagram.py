@@ -8,21 +8,35 @@ Output:
 
     system_design/system_architecture.pdf
 
-The PDF is a 3-page design document:
+The PDF is a 6-page design document:
 
   Page 1 — Top-level architecture diagram
            Clients · API · Orchestration · NLU · Retrieval · LLMs ·
            Persistence · Knowledge Graph · Ingestion (with versions
-           and key environment variables)
+           and key environment variables).
 
   Page 2 — Diagnostic-mode flow (LangGraph topology)
            START → format → retrieve → [rank_causes] → generate →
-           critic → retry → END, plus a per-node reference table
+           critic → retry → END, plus a per-node reference table.
 
   Page 3 — Cost & latency breakdown
            Per-mode summary (Quick / Diagnostic / Chat / Classical RAG /
            Direct LLM), per-stage Diagnostic detail, and a
-           cloud-vs-local pricing comparison
+           cloud-vs-local pricing comparison.
+
+  Page 4 — Human-in-the-Loop (HITL) approval gate
+           criticality_check / human_approval topology, risk-score
+           drivers, REST surface, and the pipeline status state machine.
+
+  Page 5 — Low-level component sequence  (RBAC + Approvals UI)
+           Lane-by-lane walk through a real $5,000 PO from the
+           operator's chat box through auth, criticality classifier,
+           checkpointer, the Next.js Approvals tab, and the audit log.
+
+  Page 6 — Component interaction contracts
+           Edge-level catalogue: from → to · payload · auth · failure
+           modes · p50 latency. The single source of truth for every
+           in-process and HTTP boundary in the system.
 """
 
 from __future__ import annotations
@@ -210,7 +224,7 @@ def draw_page1(c):
         "Hybrid retrieval (BM25 + FAISS + KG) \u2022 "
         "Optional cause-ranker \u2022 Critic-validated tiered LLMs",
         page_num=1,
-        total_pages=4,
+        total_pages=6,
     )
 
     # ─── Clients lane ──────────────────────────────────────────────────────
@@ -407,7 +421,7 @@ def draw_page2(c):
         "this StateGraph. The procedural orchestrator follows the "
         "same logical flow.",
         page_num=2,
-        total_pages=4,
+        total_pages=6,
     )
 
     # ─── Top half: graph topology ─────────────────────────────────────────
@@ -506,7 +520,7 @@ def draw_page3(c):
         "(answer = gpt-4o, critic = qwen2.5:3b on Ollama). "
         "Local models are free; OpenAI pricing per core/llm_client.py.",
         page_num=3,
-        total_pages=4,
+        total_pages=6,
     )
 
     # ─── Section 1: Per-mode summary ──────────────────────────────────────
@@ -643,7 +657,7 @@ def draw_page4(c):
         "criticality_check + human_approval (interrupt) \u2022 SQLite checkpointer "
         "\u2022 audit log \u2022 USE_HITL=true",
         page_num=4,
-        total_pages=4,
+        total_pages=6,
     )
 
     # ── Topology ──
@@ -775,6 +789,339 @@ def draw_page4(c):
     )
 
 
+# ─── Page 5 — Low-level component sequence ─────────────────────────────────
+#
+# Goal: take the reader from the operator's first keystroke to the buyer
+# clicking Approve, naming every component that participates and every
+# wire that crosses a process boundary. Each numbered step references the
+# exact source location so you can grep from this page straight to the
+# implementation.
+
+def draw_page5(c):
+    page_w, page_h = landscape(letter)
+    draw_page_header(
+        c,
+        "Low-Level Component Sequence  —  $5,000 PO end-to-end",
+        "Operator submits a high-risk PO \u2192 LangGraph pauses at the HITL "
+        "interrupt \u2192 buyer signs off from the Approvals tab. Each step names "
+        "the file and wire payload.",
+        page_num=5,
+        total_pages=6,
+    )
+
+    # ─── Lane setup ────────────────────────────────────────────────────────
+    #
+    # Eight vertical lanes, drawn left-to-right. Lane centres are quoted so
+    # the arrow/step drawing helpers below don't have to repeat the maths.
+    LANES = [
+        ("Operator UI\nweb/app/page.tsx",          HexColor("#E0E7FF")),
+        ("Auth gate\ncomponents/AuthGate.tsx",     HexColor("#FEF3C7")),
+        ("FastAPI\napi/server.py",                 HexColor("#FFE4E6")),
+        ("Pipeline\nunified_pipeline.py",          HexColor("#DCFCE7")),
+        ("LangGraph\nlanggraph_orchestrator.py",   HexColor("#CFFAFE")),
+        ("Risk + RBAC\ncriticality · rbac",        HexColor("#FDE2E2")),
+        ("Persistence\nSqliteSaver · audit · auth", HexColor("#F1F5F9")),
+        ("Buyer UI\nApprovalsTab + banner",        HexColor("#F3E8FF")),
+    ]
+    lane_top = page_h - 75
+    lane_bottom = 130
+    lane_count = len(LANES)
+    lane_left = 36
+    lane_right = page_w - 36
+    lane_width = (lane_right - lane_left) / lane_count
+
+    def lane_x(i: int) -> float:
+        return lane_left + lane_width * i + lane_width / 2
+
+    # Lane header bands.
+    for i, (label, color) in enumerate(LANES):
+        x = lane_left + lane_width * i
+        c.setFillColor(color)
+        c.roundRect(x + 4, lane_top - 38, lane_width - 8, 36, 4,
+                    fill=1, stroke=0)
+        c.setFillColor(TITLE_COLOR)
+        c.setFont("Helvetica-Bold", 7.5)
+        for j, line in enumerate(label.split("\n")):
+            c.drawCentredString(x + lane_width / 2, lane_top - 14 - j * 9, line)
+
+        # Lane spine — long vertical guide.
+        c.setStrokeColor(HexColor("#CBD5E1"))
+        c.setLineWidth(0.5)
+        c.setDash([2, 3], 0)
+        c.line(x + lane_width / 2, lane_top - 44, x + lane_width / 2,
+               lane_bottom)
+        c.setDash([], 0)
+
+    # ─── Sequence steps ────────────────────────────────────────────────────
+    #
+    # Each step is (label, from_lane, to_lane). The y-coordinate ticks down
+    # 22 pt per step so the diagram reads top-to-bottom like a UML sequence.
+    steps = [
+        # Login phase.
+        ("1. POST /api/auth/login\n   {user_id, password}",            0, 1),
+        ("2. signup/login \u2192 auth_store.sqlite\n   bearer 32B, TTL 24h", 1, 6),
+        ("3. token cached in localStorage",                            1, 0),
+        # Chat phase.
+        ("4. POST /api/chat\n   Authorization: Bearer \u2026",         0, 2),
+        ("5. ChatAgent.respond()\n   slot-fill \u2192 pipeline.run()", 2, 3),
+        ("6. langgraph.invoke(thread_id)\n   format \u2192 detect_purchase \u2192 retrieve", 3, 4),
+        ("7. criticality_classifier.score(\u2026)\n   purchase_value=$5,000>=$2,000  \u2192 risk 0.70", 4, 5),
+        ("8. required_roles_for(drivers)\n   \u2192 ['buyer']",        5, 4),
+        ("9. interrupt({thread_id, risk, \u2026})\n   SqliteSaver checkpoints state", 4, 6),
+        ("10. response.awaiting_approval=true\n    pending_approval_thread_id=\u2026", 2, 0),
+        ("11. ApprovalBanner mounts\n    composer disabled; deep-link visible", 0, 0),
+        # Buyer phase.
+        ("12. Buyer signs in (steps 1–3 repeat)\n    role='buyer'",     7, 1),
+        ("13. GET /api/approvals/my\n    Bearer (buyer)",               7, 2),
+        ("14. bucket pending: maker / pending_for_me\n    can_approve(role, required) \u2227 \u00ac is_maker_locked", 2, 5),
+        ("15. {stats, pending_for_me:[\u2026], actioned:[\u2026]}",     2, 7),
+        ("16. Approvals tab renders PendingForMeCard\n    inline Approve / Reject",        7, 7),
+        ("17. POST /api/approvals/{thread}/resume\n    {approved:true, comments}",         7, 2),
+        ("18. require_user + can_approve + \u00ac maker_locked\n    \u2192 reject 403 / 409 if violated", 2, 5),
+        ("19. graph.invoke(Command(resume=decision))\n    critic \u2192 END",              2, 4),
+        ("20. audit_log.record(\u2026)\n    maker, approver, role, drivers",                4, 6),
+        ("21. 200 OK \u2192 dashboardRefreshKey++\n    operator's banner clears next poll", 2, 7),
+    ]
+
+    # Render the sequence. Distinct colours for the three sub-phases keep
+    # the diagram readable even printed in black and white.
+    sub_colors = [
+        HexColor("#1E3A8A"),  # blue – login
+        HexColor("#15803D"),  # green – chat / pause
+        HexColor("#7C2D12"),  # amber/brown – approval
+    ]
+    def color_for(i):
+        if i <= 2:
+            return sub_colors[0]
+        if i <= 10:
+            return sub_colors[1]
+        return sub_colors[2]
+
+    y = lane_top - 48
+    step_dy = 18
+    for idx, (label, src, dst) in enumerate(steps):
+        col = color_for(idx)
+        x1 = lane_x(src)
+        x2 = lane_x(dst)
+        # Self-call (src == dst) → render as a small bracket on that lane.
+        if src == dst:
+            bracket_w = lane_width * 0.45
+            cx = x1
+            # Place the label on whichever side has more room so the right
+            # edge doesn't clip text for the last lane.
+            label_on_right = src < lane_count - 1
+            c.setStrokeColor(col)
+            c.setLineWidth(1.0)
+            c.line(cx - bracket_w / 2, y, cx - bracket_w / 2, y - 8)
+            c.line(cx - bracket_w / 2, y - 8, cx + bracket_w / 2, y - 8)
+            c.line(cx + bracket_w / 2, y, cx + bracket_w / 2, y - 8)
+            # Arrow head pointing back into the lane spine.
+            c.setFillColor(col)
+            head_x = cx + bracket_w / 2 if label_on_right else cx - bracket_w / 2
+            head_dir = -1 if label_on_right else 1  # tip points toward spine
+            p = c.beginPath()
+            p.moveTo(head_x, y - 8)
+            p.lineTo(head_x + head_dir * 4, y - 11)
+            p.lineTo(head_x + head_dir * 4, y - 5)
+            p.close()
+            c.drawPath(p, fill=1, stroke=0)
+            # Label
+            c.setFillColor(TITLE_COLOR)
+            c.setFont("Helvetica", 7)
+            for j, line in enumerate(label.split("\n")):
+                if label_on_right:
+                    c.drawString(cx + bracket_w / 2 + 6, y - 4 - j * 8, line)
+                else:
+                    c.drawRightString(cx - bracket_w / 2 - 6, y - 4 - j * 8, line)
+        else:
+            draw_arrow(c, x1, y, x2, y, color=col)
+            c.setFillColor(TITLE_COLOR)
+            c.setFont("Helvetica", 7)
+            mx = (x1 + x2) / 2
+            for j, line in enumerate(label.split("\n")):
+                c.drawCentredString(mx, y + 4 + (1 - j) * 8 + 1, line) \
+                    if False else c.drawCentredString(mx, y - 8 - j * 8, line)
+        y -= step_dy
+
+    # ─── Footer legend ─────────────────────────────────────────────────────
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(36, 92, "Phases")
+    legend = [
+        ("blue",   "1–3  Auth / token mint  (24h TTL, stdlib PBKDF2-SHA256)"),
+        ("green",  "4–11 Chat \u2192 risk \u2192 interrupt; state durable via SqliteSaver"),
+        ("amber",  "12–21 Buyer signs in, approves, audit row written, banner clears"),
+    ]
+    name_to_color = {
+        "blue":  HexColor("#1E3A8A"),
+        "green": HexColor("#15803D"),
+        "amber": HexColor("#7C2D12"),
+    }
+    c.setFont("Helvetica", 7.5)
+    for i, (name, txt) in enumerate(legend):
+        col = name_to_color[name]
+        c.setFillColor(col)
+        c.rect(36, 78 - i * 11, 12, 8, fill=1, stroke=0)
+        c.setFillColor(TITLE_COLOR)
+        c.drawString(54, 79 - i * 11, txt)
+
+    draw_page_footer(
+        c,
+        "Self-arrows = in-process call within a single component. "
+        "Cross-lane arrows always cross a process boundary "
+        "(HTTP / SQLite / LangGraph checkpoint).",
+    )
+
+
+# ─── Page 6 — Component interaction contracts ──────────────────────────────
+#
+# This page lists *every* edge in the system as a row: the wire payload,
+# auth required, failure modes, and a p50 latency budget. Treat it as the
+# single source of truth — any code change that breaks a row here is an
+# observable architectural change that needs review.
+
+def draw_page6(c):
+    page_w, page_h = landscape(letter)
+    draw_page_header(
+        c,
+        "Component Interaction Contracts",
+        "Every cross-component edge in the system. Use this page as the "
+        "single source of truth when changing a payload, an auth check, "
+        "or a failure mode.",
+        page_num=6,
+        total_pages=6,
+    )
+
+    # ─── Section 1: UI → API (HTTP) ────────────────────────────────────────
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, page_h - 88, "1.  UI \u2192 API  (HTTP boundary)")
+
+    headers = ["From", "To", "Route / Payload", "Auth", "Fails when", "p50"]
+    rows = [
+        ("Next.js page.tsx", "api/auth",
+         "POST /api/auth/login {user_id, password}",
+         "—", "wrong password \u2192 401", "20–50 ms"),
+        ("Next.js page.tsx", "api/server",
+         "POST /api/chat {session_id, message}",
+         "Bearer (opt)", "422 / 500 on pipeline error", "0.4–9 s"),
+        ("ApprovalsTab", "api/server", "GET /api/approvals/my",
+         "Bearer", "401 on missing token", "30–80 ms"),
+        ("PendingForMeCard", "api/server",
+         "POST /api/approvals/{thread}/resume",
+         "Bearer (checker)", "403 wrong role · 409 maker-lock · 404 unknown",
+         "0.6–3.5 s"),
+        ("ApprovalBanner", "api/server", "GET /api/approvals/{thread_id}",
+         "Bearer (opt)", "404 unknown thread", "20–50 ms"),
+        ("Streamlit app.py", "api/server",
+         "same endpoints (in-tab login)",
+         "Bearer (shared)", "same as above", "same"),
+    ]
+    col_widths = [105, 90, 200, 95, 180, 50]
+    y_after = draw_table(c, 36, page_h - 96, headers, rows, col_widths,
+                         row_height=15, header_height=20)
+
+    # ─── Section 2: API → Domain (in-process) ──────────────────────────────
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, y_after - 22, "2.  FastAPI \u2192 domain  (in-process Python)")
+
+    headers2 = ["From", "To", "Call / contract", "Notes", "Side effects", "p50"]
+    rows2 = [
+        ("api/server", "ChatAgent.respond",
+         "respond(session_id, msg, user) \u2192 ChatTurn",
+         "Slot fill \u2192 pipeline.run",
+         "stamps maker_user_id", "0.4–9 s"),
+        ("ChatAgent", "ManufacturingPipeline.run",
+         "run(query, mode='diagnostic') \u2192 Result",
+         "Intent + USE_LANGGRAPH",
+         "may pause at interrupt", "0.4–9 s"),
+        ("ManufacturingPipeline", "LangGraphOrchestrator",
+         "invoke(state, config={thread_id})",
+         "USE_LANGGRAPH=true",
+         "checkpoint per node", "0.4–9 s"),
+        ("LangGraph node", "criticality_classifier",
+         "score(query, answer, purchase_request) \u2192 Risk",
+         "Rules \u2192 drivers \u2192 score",
+         "—", "1–5 ms"),
+        ("criticality_classifier", "rbac.required_roles_for",
+         "required_roles_for(drivers, pr) \u2192 [role_id]",
+         "OR-set; stable order",
+         "—", "<1 ms"),
+        ("api/server (resume)", "rbac.can_approve / is_maker_locked",
+         "two boolean guards before resume",
+         "403 / 409 if violated",
+         "—", "<1 ms"),
+        ("LangGraph (resume)", "audit_log.record",
+         "record(thread, decision, maker, approver, role, \u2026)",
+         "Append-only",
+         "SQLite write", "1–4 ms"),
+    ]
+    col_widths2 = [115, 140, 195, 115, 115, 40]
+    y_after2 = draw_table(c, 36, y_after - 30, headers2, rows2, col_widths2,
+                          row_height=15, header_height=20)
+
+    # ─── Section 3: Domain → Persistence ───────────────────────────────────
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, y_after2 - 22, "3.  Domain \u2192 persistence")
+
+    headers3 = ["Component", "Backend", "Lifecycle",
+                "Failure mode", "Drop-in replacement"]
+    rows3 = [
+        ("auth_store",      "auth.sqlite (stdlib sqlite3)",
+         "open per call; 24h token TTL",
+         "delete file \u2192 re-seed accounts",
+         "OIDC · Argon2"),
+        ("SqliteSaver",     "audit.sqlite (lg_checkpoint_sqlite)",
+         "one checkpoint per node",
+         "missing pkg \u2192 MemorySaver (WARN)",
+         "Postgres saver"),
+        ("audit_log",       "audit.sqlite (append-only)",
+         "writes on every approve/reject",
+         "disk full \u2192 500",
+         "Kafka topic"),
+        ("FAISS index",     "doc_pipeline/vector_store/*",
+         "rebuilt only when stale",
+         "missing \u2192 rebuild on boot",
+         "Qdrant / Pinecone"),
+        ("Knowledge graph", "data/processed/knowledge_graph.json",
+         "rebuilt when input docs change",
+         "missing \u2192 rebuild on boot",
+         "Neo4j / TigerGraph"),
+        ("Session memory",  "in-memory dict (FastAPI process)",
+         "wiped on restart",
+         "crash \u2192 session lost (threads survive)",
+         "Redis"),
+    ]
+    col_widths3 = [105, 170, 135, 190, 120]
+    y_after3 = draw_table(c, 36, y_after2 - 30, headers3, rows3, col_widths3,
+                          row_height=15, header_height=20)
+
+    # ─── Section 4: Role-gating policy (tightening of the API guard) ──────
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, y_after3 - 22, "4.  Authorisation policy on /api/approvals/{thread}/resume")
+
+    policy_lines = [
+        "  1.  Bearer token resolves to a User (else 401 unauthorised).",
+        "  2.  user.role \u2208 required_roles  (else 403 forbidden \u2014 wrong role).",
+        "  3.  user.user_id \u2260 maker_user_id (else 409 conflict \u2014 maker locked).",
+        "  4.  thread_id is still pending (else 404 not found / 409 if already resolved).",
+        "Outcome: graph resumes \u2192 audit row written \u2192 stats refresh \u2192 both UIs refetch on next poll.",
+    ]
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica", 8)
+    for i, line in enumerate(policy_lines):
+        c.drawString(36, y_after3 - 36 - i * 10, line)
+
+    draw_page_footer(
+        c,
+        "Latencies measured against a warm pipeline on an M2 MacBook; p50 cited, "
+        "p99 typically 2\u20133\u00d7 these numbers. Numbers exclude OpenAI tail latencies.",
+    )
+
+
 # ─── Driver ─────────────────────────────────────────────────────────────────
 
 
@@ -783,7 +1130,10 @@ def main():
     c = canvas.Canvas(str(OUTPUT), pagesize=landscape(letter))
     c.setTitle("Hybrid GraphRAG Manufacturing — System Design")
     c.setAuthor("hybrid-graphrag-manufacturing")
-    c.setSubject("Architecture · LangGraph topology · Cost & latency · HITL")
+    c.setSubject(
+        "Architecture · LangGraph topology · Cost & latency · HITL · "
+        "Low-level component sequence · Interaction contracts"
+    )
 
     draw_page1(c)
     c.showPage()
@@ -795,6 +1145,12 @@ def main():
     c.showPage()
 
     draw_page4(c)
+    c.showPage()
+
+    draw_page5(c)
+    c.showPage()
+
+    draw_page6(c)
     c.showPage()
 
     c.save()

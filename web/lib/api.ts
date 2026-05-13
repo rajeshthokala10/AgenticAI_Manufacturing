@@ -80,9 +80,24 @@ export type ChatState = {
   pending_approval_thread_id?: string | null;
 };
 
+export type PurchaseRequestPayload = {
+  part_id?: string | null;
+  quantity?: number | null;
+  total_usd?: number | null;
+  vendor?: string | null;
+  urgent?: boolean;
+  used_by_equipment?: string[];
+  equipment_criticality?: string | null;
+  single_source?: boolean | null;
+  lead_time_days?: number | null;
+  last_known_unit_price?: number | null;
+  notes?: string[];
+};
+
 export type ApprovalSnapshot = {
   thread_id: string;
   session_id?: string | null;
+  ts?: number;
   raw_query?: string;
   answer?: string;
   risk?: {
@@ -90,7 +105,7 @@ export type ApprovalSnapshot = {
     drivers: string[];
     needs_human?: boolean;
   };
-  purchase_request?: Record<string, unknown> | null;
+  purchase_request?: PurchaseRequestPayload | null;
   required_roles?: string[];
   maker_user_id?: string | null;
   can_current_user_approve?: boolean;
@@ -115,6 +130,42 @@ export type TokenResponse = {
   token: string;
   expires_at: number;
   user: AuthUser;
+};
+
+export type AuditEntry = {
+  id: number;
+  ts: number;
+  ts_iso: string;
+  thread_id: string;
+  decision: "approved" | "rejected";
+  approver: string;
+  approver_user_id?: string | null;
+  approver_role?: string | null;
+  maker_user_id?: string | null;
+  risk_score: number;
+  drivers: string[];
+  required_roles: string[];
+  domain: string;
+  query: string;
+  proposed_answer: string;
+  edited_answer?: string | null;
+  comments?: string | null;
+};
+
+export type MyApprovalsResponse = {
+  user: AuthUser;
+  stats: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    approval_rate: number;
+    pending_for_me: number;
+  };
+  pending: ApprovalSnapshot[];
+  pending_for_me: ApprovalSnapshot[];
+  decisions: AuditEntry[];
+  actioned: AuditEntry[];
 };
 
 export type HealthResponse = {
@@ -214,4 +265,5 @@ export const api = {
   logout: () =>
     jsonFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () => jsonFetch<AuthUser>("/api/auth/me"),
+  myApprovals: () => jsonFetch<MyApprovalsResponse>("/api/approvals/my"),
 };

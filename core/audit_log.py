@@ -217,6 +217,59 @@ class AuditLog:
             ).fetchall()
         return [self._row_to_entry(r) for r in rows]
 
+    def for_maker(
+        self, maker_user_id: str, limit: int = 100, offset: int = 0
+    ) -> List[AuditEntry]:
+        """Audit rows for requests submitted by ``maker_user_id`` (case-insensitive)."""
+        uid = (maker_user_id or "").strip().lower()
+        if not uid:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM approvals WHERE LOWER(maker_user_id) = ? "
+                "ORDER BY ts DESC LIMIT ? OFFSET ?",
+                (uid, int(limit), int(offset)),
+            ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
+
+    def for_approver(
+        self, approver_user_id: str, limit: int = 100, offset: int = 0
+    ) -> List[AuditEntry]:
+        """Audit rows for decisions taken by ``approver_user_id``."""
+        uid = (approver_user_id or "").strip().lower()
+        if not uid:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM approvals WHERE LOWER(approver_user_id) = ? "
+                "ORDER BY ts DESC LIMIT ? OFFSET ?",
+                (uid, int(limit), int(offset)),
+            ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
+
+    def stats_for_maker(self, maker_user_id: str) -> Dict[str, Any]:
+        """Decision counts for everything a specific maker has submitted."""
+        uid = (maker_user_id or "").strip().lower()
+        if not uid:
+            return {"total": 0, "approved": 0, "rejected": 0, "approval_rate": 0.0}
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(CASE WHEN decision='approved' THEN 1 ELSE 0 END) AS approved, "
+                "SUM(CASE WHEN decision='rejected' THEN 1 ELSE 0 END) AS rejected "
+                "FROM approvals WHERE LOWER(maker_user_id) = ?",
+                (uid,),
+            ).fetchone()
+        total = int(row["total"] or 0)
+        approved = int(row["approved"] or 0)
+        rejected = int(row["rejected"] or 0)
+        return {
+            "total": total,
+            "approved": approved,
+            "rejected": rejected,
+            "approval_rate": round(approved / total, 3) if total else 0.0,
+        }
+
     def stats(self) -> Dict[str, Any]:
         with self._conn() as conn:
             row = conn.execute(

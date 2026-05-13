@@ -130,6 +130,13 @@ See `requirements.txt` (Python) and `web/package.json` (Node) for exact versions
 
 ---
 
+> **Architect-grade diagram set:** `system_design/system_architecture.pdf` is the canonical
+> reference. Six landscape pages, regenerable from `system_design/generate_diagram.py`:
+> top-level architecture · LangGraph diagnostic flow · cost & latency breakdown · HITL gate ·
+> **low-level component sequence** (every step of a $5,000 PO from operator keystroke to audit
+> row) · **component interaction contracts** (every cross-process edge with payload, auth and
+> failure modes). Rebuild any time with `.venv/bin/python system_design/generate_diagram.py`.
+
 ## High-Level Architecture
 
 ```mermaid
@@ -1100,11 +1107,14 @@ interrupts). The checkpointer falls back to `memory` automatically if
 GET  /api/approvals/pending              → [{thread_id, ts, summary, risk, drivers, …}]
 GET  /api/approvals/{thread_id}          → full snapshot for one paused workflow
 POST /api/approvals/{thread_id}/resume   → {approved, approver, comments, edited_answer?}
+GET  /api/approvals/my                   → {user, stats, pending, pending_for_me,
+                                            decisions, actioned}   (Bearer required)
 GET  /api/audit?limit=50&offset=0        → recent decisions + approval-rate stats
 ```
 
 `/api/health` now returns `use_hitl` and `use_langgraph` so any UI can hide the Approvals tab
-when the gate is off.
+when the gate is off. `/api/approvals/my` drives the Next.js **My Requests** and **Approvals**
+dashboards — see the *Next.js dashboards* section below.
 
 ### Streamlit `📋 Approvals` tab
 
@@ -1116,6 +1126,74 @@ the audit log. Recent decisions render below the queue.
 
 When a chat session has a paused thread, the chat tab shows a `⏸️ Workflow paused for approval`
 banner and disables the input box until the reviewer resolves it.
+
+### Next.js dashboards — `📊 My Requests` and `🛡️ Approvals`
+
+The Next.js UI at `http://localhost:3000` ships two role-aware dashboards next to `💬 Chat`.
+The tab strip is gated by `isCheckerRole(role)` in
+[`web/components/dashboard-atoms.tsx`](web/components/dashboard-atoms.tsx) so each persona only
+sees the surface they actually need.
+
+| Tab | Audience | Renders |
+| --- | --- | --- |
+| **💬 Chat** | everyone | the chat composer + the `ApprovalBanner` when the active session pauses |
+| **📊 My Requests** | everyone | the **maker** view — KPIs and tables for requests *you* submitted |
+| **🛡️ Approvals** | checkers only (role ≠ `operator`) | the **checker** workspace — items waiting on you to action + your decision history |
+
+Both dashboards are driven by a single endpoint —
+**`GET /api/approvals/my`** (added in this iteration). It walks the live HITL queue once and
+returns two pre-bucketed lists tailored to the bearer-token user, so the UI never has to filter
+or re-sort:
+
+```jsonc
+{
+  "user":   { "user_id": "eve.buyer@plant.local", "role": "buyer", "display_name": "Eve Buyer" },
+  "stats":  { "total": 0, "pending": 0, "approved": 0, "rejected": 0,
+              "approval_rate": 0.0, "pending_for_me": 1 },
+  "pending":         [ /* requests I submitted that are still paused */ ],
+  "pending_for_me":  [ /* requests routed to my role AND not submitted by me */ ],
+  "decisions":       [ /* approved/rejected outcomes on my submissions */ ],
+  "actioned":        [ /* approve/reject events I performed (checker history) */ ]
+}
+```
+
+The `pending_for_me` bucket applies both authorisation rules server-side
+(`can_approve(role, required_roles)` ∧ ¬ `is_maker_locked(user, maker)`) so the UI is purely
+presentational.
+
+**My Requests (maker view).** Four KPI cards — Total submitted / Pending / Approved /
+Rejected — over two tables (live pending submissions, resolved decisions with approver + role +
+comments). This is the same view every user gets, regardless of role, because anyone can submit
+an escalating request.
+
+**Approvals (checker view).** Four checker-focused KPI cards — Pending your approval / Approved
+by you / Rejected by you / Total actioned — over two sections:
+
+* **Pending your approval** — every request routed to your role, rendered as full cards (not a
+  table) with submitter, risk score, drivers, the parsed purchase-line (qty / part / `$total` /
+  vendor / URGENT badge), a collapsible *Proposed answer*, a comments textarea, and inline
+  **✓ Approve** / **✗ Reject** buttons. Resolving an item refetches the dashboard immediately
+  via a shared `dashboardRefreshKey`.
+* **Approvals I actioned** — your decision history with request, submitter, decision badge,
+  and comments.
+
+The split mirrors a real shop-floor workflow: operators live in *My Requests* (track what they
+sent up the chain); checkers live in *Approvals* (clear the queue). The chat-tab banner stays
+the fastest path when the user is already mid-conversation, but for triaging a backlog the
+dedicated tab is the primary surface.
+
+Implementation notes:
+
+* Shared atoms (`Kpi`, `SectionHeader`, `EmptyState`, `PendingForMeCard`, `DecisionRow`,
+  `PendingRow`, plus `isCheckerRole`) live in
+  [`web/components/dashboard-atoms.tsx`](web/components/dashboard-atoms.tsx) so the two
+  dashboards stay visually consistent without duplicating styles.
+* [`MyRequestsDashboard.tsx`](web/components/MyRequestsDashboard.tsx) is the maker-only view.
+* [`ApprovalsTab.tsx`](web/components/ApprovalsTab.tsx) is the checker workspace, with the
+  inline approve/reject controller wired straight to `/api/approvals/{thread}/resume`.
+* The tab strip and `effectiveTab` fallback in
+  [`web/app/page.tsx`](web/app/page.tsx) make the Approvals tab disappear cleanly for operators
+  (and survives a sign-out without stranding the user on a blank pane).
 
 ### Persistence (Phase B)
 
@@ -1281,22 +1359,35 @@ hybrid-graphrag-manufacturing/
 │
 ├── api/                            # ★ FastAPI backend (powers Next.js + any client)
 │   ├── __init__.py
-│   ├── server.py                   # FastAPI app — /api/{chat,health,stats,reset,sessions}
+│   ├── server.py                   # FastAPI app — /api/{chat,health,stats,reset,sessions,
+│   │                               #                approvals/*,auth/*,audit}
+│   ├── auth.py                     # /api/auth/{signup,login,logout,me,roles}
 │   └── serializers.py              # ChatTurn / Slot / ClarifierResult → JSON
 │
-├── web/                            # ★ Next.js 14 Claude-style chat UI
-│   ├── app/                        # App-router pages (page.tsx, layout.tsx, globals.css)
-│   ├── components/                 # ChatMessage, ChatComposer, Sidebar
-│   ├── lib/api.ts                  # typed FastAPI client
+├── web/                            # ★ Next.js 14 chat + dashboards UI
+│   ├── app/
+│   │   ├── page.tsx                # Chat | My Requests | Approvals tab strip
+│   │   ├── layout.tsx              # global shell
+│   │   └── globals.css             # Tailwind entry + cream/copper palette
+│   ├── components/
+│   │   ├── ChatMessage.tsx         # chat bubble (markdown + evidence panel)
+│   │   ├── ChatComposer.tsx        # input box (disabled while paused)
+│   │   ├── Sidebar.tsx             # health, stats, signed-in card, HITL triggers
+│   │   ├── AuthGate.tsx            # login / signup screen for /api/auth
+│   │   ├── MyRequestsDashboard.tsx # maker view (items I submitted)
+│   │   ├── ApprovalsTab.tsx        # checker view (pending_for_me + history)
+│   │   └── dashboard-atoms.tsx     # Kpi · cards · helpers + isCheckerRole gate
+│   ├── lib/api.ts                  # typed FastAPI client + token storage
 │   ├── next.config.js              # /api/* → http://localhost:8000 rewrite
 │   ├── tailwind.config.ts          # cream + copper palette
 │   └── package.json                # Next 14 · React 18 · Tailwind 3
 │
-├── pipeline/                       # ★ Unification + chat layer
+├── pipeline/                       # ★ Unification + chat + HITL orchestration
 │   ├── __init__.py                 # exports ManufacturingPipeline, ChatAgent, ChatState
 │   ├── adapter.py                  # Chunk → core dict + entity extraction
 │   ├── faiss_retriever.py          # FAISS-backed VectorRetriever (drop-in)
-│   ├── unified_pipeline.py         # ManufacturingPipeline orchestrator
+│   ├── unified_pipeline.py         # ManufacturingPipeline orchestrator + annotate_pending
+│   ├── langgraph_orchestrator.py   # ★ StateGraph with criticality_check + human_approval
 │   └── chat_agent.py               # ★ Multi-turn ChatAgent (slot-filling state machine)
 │
 ├── doc_pipeline/                   # Document ingestion + clarifier
@@ -1315,13 +1406,19 @@ hybrid-graphrag-manufacturing/
 │   ├── vector_store/               # ★ committed prebuilt FAISS index
 │   └── output/                     # runtime outputs (gitignored)
 │
-├── core/                           # LLM / KG / retrieval layer
+├── core/                           # LLM / KG / retrieval / HITL / RBAC layer
 │   ├── document_processor.py       # legacy chunker (kept for reference)
 │   ├── knowledge_graph.py          # NetworkX KG (build · query · persist as JSON)
 │   ├── query_formatter.py          # intent + entity + abbreviation expansion
 │   ├── orchestrator.py             # process_query() — accepts injected retriever
 │   ├── critic.py                   # LLM critic + verdict parser
 │   ├── llm_client.py               # OpenAI + Ollama (tiered routing)
+│   ├── cause_ranker.py             # optional LLM cause-ranking stage
+│   ├── criticality_classifier.py   # ★ Risk score + drivers (HITL gate)
+│   ├── purchase_request.py         # PurchaseRequest parser + KG enrichment
+│   ├── rbac.py                     # ★ Role catalogue + required_roles_for routing
+│   ├── auth_store.py               # ★ SQLite user/token store (auth.sqlite)
+│   ├── audit_log.py                # ★ Append-only audit + dashboard aggregations
 │   └── retrieval/
 │       ├── bm25_retriever.py       # rank_bm25 OR pure-Python fallback
 │       ├── vector_retriever.py     # ChromaDB (optional — falls back to FAISS)
@@ -1339,7 +1436,10 @@ hybrid-graphrag-manufacturing/
 ├── data/                           # Auxiliary corpora picked up if present
 │   ├── pdfs/                       # Source manuals (.txt placeholders)
 │   ├── excel/                      # work_orders.xlsx, alarm_history.xlsx, …
-│   └── processed/                  # knowledge_graph.json (generated)
+│   └── processed/                  # knowledge_graph.json + HITL SQLite files
+│       ├── knowledge_graph.json    # generated KG snapshot
+│       ├── audit.sqlite            # LangGraph checkpointer + audit log
+│       └── auth.sqlite             # RBAC user / bearer-token store
 │
 ├── .run/                           # runtime PID + log dir (gitignored, created by run.sh)
 │   ├── api.pid · streamlit.pid · web.pid

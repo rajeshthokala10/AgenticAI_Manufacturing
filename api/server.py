@@ -266,6 +266,83 @@ def _enrich_pending(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+@app.get("/api/approvals/my")
+def my_approvals(
+    user: UserRecord = Depends(require_user),
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Maker + checker dashboard for the signed-in user.
+
+    Returns:
+      * ``stats``      — total / pending / approved / rejected for *requests
+                          this user has submitted* (rolled up from the audit
+                          log + the live pending queue).
+      * ``pending``    — requests this user submitted that are still waiting
+                          for approval, including who is allowed to approve.
+      * ``decisions``  — last N resolved requests (approved or rejected) the
+                          user submitted, including approver identity + role.
+      * ``actioned``   — last N decisions the user *took* as an approver
+                          (only populated for checker roles).
+    """
+    _require_hitl()
+    log = get_default_log()
+
+    # Walk the live queue once and bucket each entry into two views:
+    #   * my_pending      — items the user *submitted* (maker side)
+    #   * pending_for_me  — items the user is *authorised to action* (checker
+    #                       side: role ∈ required_roles AND maker-lock clear)
+    all_pending = _Singleton.pipe.pending_approvals()
+    my_pending: List[Dict[str, Any]] = []
+    pending_for_me: List[Dict[str, Any]] = []
+    for entry in all_pending:
+        enriched = _enrich_pending(entry)
+        # Trim the heavy fields the dashboard doesn't need.
+        enriched.pop("evidence", None)
+        enriched.pop("interrupt_payload", None)
+
+        maker = (enriched.get("maker_user_id") or "").lower()
+        if maker == user.user_id.lower():
+            my_pending.append(enriched)
+            continue
+
+        if can_approve(user.role, enriched.get("required_roles", [])) and not is_maker_locked(
+            user.user_id, enriched.get("maker_user_id")
+        ):
+            enriched_for_me = {**enriched, "can_current_user_approve": True}
+            pending_for_me.append(enriched_for_me)
+
+    # Resolved decisions on my submissions.
+    decisions = [e.to_dict() for e in log.for_maker(user.user_id, limit=limit)]
+
+    # Decisions I took (only meaningful for checkers).
+    actioned: List[Dict[str, Any]] = []
+    if user.role != "operator":
+        actioned = [e.to_dict() for e in log.for_approver(user.user_id, limit=limit)]
+
+    audit_stats = log.stats_for_maker(user.user_id)
+    stats = {
+        "total": audit_stats["total"] + len(my_pending),
+        "pending": len(my_pending),
+        "approved": audit_stats["approved"],
+        "rejected": audit_stats["rejected"],
+        "approval_rate": audit_stats["approval_rate"],
+        "pending_for_me": len(pending_for_me),
+    }
+
+    return {
+        "user": {
+            "user_id": user.user_id,
+            "role": user.role,
+            "display_name": user.display_name,
+        },
+        "stats": stats,
+        "pending": my_pending,
+        "pending_for_me": pending_for_me,
+        "decisions": decisions,
+        "actioned": actioned,
+    }
+
+
 @app.get("/api/approvals/pending")
 def list_pending_approvals(
     user: Optional[UserRecord] = Depends(get_optional_user),

@@ -5,6 +5,9 @@ import { ChatMessage, TypingBubble } from "@/components/ChatMessage";
 import { ChatComposer } from "@/components/ChatComposer";
 import { Sidebar } from "@/components/Sidebar";
 import { AuthGate } from "@/components/AuthGate";
+import { MyRequestsDashboard } from "@/components/MyRequestsDashboard";
+import { ApprovalsTab } from "@/components/ApprovalsTab";
+import { isCheckerRole } from "@/components/dashboard-atoms";
 import {
   api,
   setAuthToken,
@@ -14,6 +17,8 @@ import {
   type HealthResponse,
   type StatsResponse,
 } from "@/lib/api";
+
+type ActiveTab = "chat" | "requests" | "approvals";
 
 // Default Streamlit port from run.sh. Override at build time with
 // NEXT_PUBLIC_STREAMLIT_ORIGIN if your deployment uses a non-default host.
@@ -44,6 +49,10 @@ export default function ChatPage() {
   );
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("chat");
+  // Bumped after every approval action so the dashboard refetches without a
+  // manual reload.
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -156,7 +165,11 @@ export default function ChatPage() {
         const res = await api.chat(sessionId, trimmed);
         setTurns(res.state.turns);
         setAwaitingPrompt(res.state.awaiting_prompt);
-        setPendingThreadId(res.state.pending_approval_thread_id ?? null);
+        const nextThread = res.state.pending_approval_thread_id ?? null;
+        setPendingThreadId(nextThread);
+        // A new request entered the approval queue — make sure the dashboard
+        // shows it next time the user switches tabs.
+        if (nextThread) setDashboardRefreshKey((k) => k + 1);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg);
@@ -223,6 +236,13 @@ export default function ChatPage() {
     return <AuthGate onSignIn={(u) => setAuthUser(u)} />;
   }
 
+  // Approvals tab is only mounted for checker roles (operators never approve).
+  const showApprovalsTab = isCheckerRole(authUser.role);
+  // Defensive: if a tab is hidden after a sign-in/out it should fall back to
+  // chat instead of leaving the user staring at a blank pane.
+  const effectiveTab: ActiveTab =
+    activeTab === "approvals" && !showApprovalsTab ? "chat" : activeTab;
+
   return (
     <div className="flex h-screen w-full overflow-hidden">
       <Sidebar
@@ -236,14 +256,38 @@ export default function ChatPage() {
 
       <main className="relative flex h-full flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-ink-900/8 px-6 py-4">
-          <div>
-            <h1 className="font-serif text-xl font-semibold text-ink-900">
-              Manufacturing Copilot
-            </h1>
-            <p className="text-xs text-ink-500">
-              Auto-correct · interactive clarifications · grounded in your
-              documents + knowledge graph
-            </p>
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="font-serif text-xl font-semibold text-ink-900">
+                Manufacturing Copilot
+              </h1>
+              <p className="text-xs text-ink-500">
+                Auto-correct · interactive clarifications · grounded in your
+                documents + knowledge graph
+              </p>
+            </div>
+            <nav className="ml-2 hidden gap-1 rounded-full border border-ink-900/10 bg-white p-1 shadow-soft md:flex">
+              <TabButton
+                active={effectiveTab === "chat"}
+                onClick={() => setActiveTab("chat")}
+              >
+                💬 Chat
+              </TabButton>
+              <TabButton
+                active={effectiveTab === "requests"}
+                onClick={() => setActiveTab("requests")}
+              >
+                📊 My Requests
+              </TabButton>
+              {showApprovalsTab ? (
+                <TabButton
+                  active={effectiveTab === "approvals"}
+                  onClick={() => setActiveTab("approvals")}
+                >
+                  🛡️ Approvals
+                </TabButton>
+              ) : null}
+            </nav>
           </div>
           <button
             onClick={handleNewChat}
@@ -253,52 +297,115 @@ export default function ChatPage() {
           </button>
         </header>
 
-        <div ref={scrollerRef} className="flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full flex-col gap-3 py-6">
-            {turns.length === 0 ? (
-              <EmptyState onPick={handlePickSuggestion} />
-            ) : (
-              turns.map((t, i) => <ChatMessage key={i} turn={t} />)
-            )}
-            {busy ? <TypingBubble /> : null}
-            {error ? (
-              <div className="mx-auto max-w-2xl px-3">
-                <div className="my-2 rounded-bubble border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-[13.5px] text-rose-900">
-                  {error}
-                </div>
-              </div>
-            ) : null}
-            {pendingThreadId ? (
-              <ApprovalBanner
-                threadId={pendingThreadId}
-                detail={pendingDetail}
-                currentUser={authUser}
-                onResolved={() => {
-                  setPendingThreadId(null);
-                  setPendingDetail(null);
-                  api
-                    .getSession(sessionId)
-                    .then((s) => {
-                      setTurns(s.state.turns);
-                      setAwaitingPrompt(s.state.awaiting_prompt);
-                    })
-                    .catch(() => {});
-                }}
-              />
-            ) : null}
-            <div className="h-24" />
-          </div>
-        </div>
+        {/* Mobile-friendly tabs (hidden on md+ where they live in the header). */}
+        <nav className="flex gap-1 border-b border-ink-900/8 bg-white px-4 py-2 md:hidden">
+          <TabButton
+            active={effectiveTab === "chat"}
+            onClick={() => setActiveTab("chat")}
+          >
+            💬 Chat
+          </TabButton>
+          <TabButton
+            active={effectiveTab === "requests"}
+            onClick={() => setActiveTab("requests")}
+          >
+            📊 My Requests
+          </TabButton>
+          {showApprovalsTab ? (
+            <TabButton
+              active={effectiveTab === "approvals"}
+              onClick={() => setActiveTab("approvals")}
+            >
+              🛡️ Approvals
+            </TabButton>
+          ) : null}
+        </nav>
 
-        <ChatComposer
-          value={input}
-          onChange={setInput}
-          onSubmit={handleSubmit}
-          placeholder={placeholder}
-          disabled={busy || !health?.ready || Boolean(pendingThreadId)}
-        />
+        {effectiveTab === "chat" ? (
+          <>
+            <div ref={scrollerRef} className="flex-1 overflow-y-auto">
+              <div className="mx-auto flex w-full flex-col gap-3 py-6">
+                {turns.length === 0 ? (
+                  <EmptyState onPick={handlePickSuggestion} />
+                ) : (
+                  turns.map((t, i) => <ChatMessage key={i} turn={t} />)
+                )}
+                {busy ? <TypingBubble /> : null}
+                {error ? (
+                  <div className="mx-auto max-w-2xl px-3">
+                    <div className="my-2 rounded-bubble border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-[13.5px] text-rose-900">
+                      {error}
+                    </div>
+                  </div>
+                ) : null}
+                {pendingThreadId ? (
+                  <ApprovalBanner
+                    threadId={pendingThreadId}
+                    detail={pendingDetail}
+                    currentUser={authUser}
+                    onResolved={() => {
+                      setPendingThreadId(null);
+                      setPendingDetail(null);
+                      setDashboardRefreshKey((k) => k + 1);
+                      api
+                        .getSession(sessionId)
+                        .then((s) => {
+                          setTurns(s.state.turns);
+                          setAwaitingPrompt(s.state.awaiting_prompt);
+                        })
+                        .catch(() => {});
+                    }}
+                  />
+                ) : null}
+                <div className="h-24" />
+              </div>
+            </div>
+            <ChatComposer
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder={placeholder}
+              disabled={busy || !health?.ready || Boolean(pendingThreadId)}
+            />
+          </>
+        ) : effectiveTab === "approvals" && showApprovalsTab ? (
+          <div className="flex-1 overflow-y-auto">
+            <ApprovalsTab user={authUser} refreshKey={dashboardRefreshKey} />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <MyRequestsDashboard
+              user={authUser}
+              refreshKey={dashboardRefreshKey}
+            />
+          </div>
+        )}
       </main>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition ${
+        active
+          ? "bg-copper-500 text-cream-50 shadow-soft"
+          : "text-ink-600 hover:bg-cream-50"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
