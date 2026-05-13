@@ -660,73 +660,261 @@ def draw_page4(c):
         total_pages=6,
     )
 
-    # ── Topology ──
-    y = page_h - 90
+    # ── Topology (rewritten as a clean two-tier flow) ──────────────────────
+    #
+    # Row 1 is the linear graph from START up to generate. Row 2 is the
+    # branch tree: a decision diamond on `criticality_check`, the
+    # interrupt-bordered `human_approval` node, the final `critic` node
+    # plus the two terminal END pills (one for the rejected short-circuit,
+    # one for the PASS path through critic).
+    #
+    # Every coordinate is anchored to `top_y` so the whole block can be
+    # nudged vertically without disturbing the relative geometry.
+
+    title_y = page_h - 88
     c.setFillColor(TITLE_COLOR)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(36, y, "LangGraph topology with the HITL gate (Phases A + B + C)")
+    c.setFont("Helvetica-Bold", 11.5)
+    c.drawString(36, title_y, "LangGraph topology with the HITL gate")
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.drawString(
+        36, title_y - 13,
+        "START \u2192 linear pipeline \u2192 criticality_check decision \u2192 "
+        "auto-approve OR human_approval (interrupt) \u2192 critic \u2192 END",
+    )
 
-    y -= 18
-    boxes = [
-        ("format", 36, y - 30, 90, 28, "#1E2761"),
-        ("detect_purchase", 132, y - 30, 110, 28, "#7A2048"),
-        ("retrieve", 248, y - 30, 90, 28, "#283593"),
-        ("rank_causes", 344, y - 30, 100, 28, "#5e35b2"),
-        ("generate", 450, y - 30, 90, 28, "#1565c0"),
-        ("criticality_check", 546, y - 30, 120, 28, "#e65100"),
-        ("human_approval\n(interrupt)", 672, y - 60, 130, 50, "#c62828"),
-        ("critic", 672, y - 30, 90, 28, "#2e7d32"),
-        ("END", 768, y - 30, 50, 28, "#424242"),
-    ]
-    for label, x, by, w, h, color in boxes:
+    # Palette tuned for print (muted, high-contrast on grey paper bg).
+    COL_COMPUTE  = HexColor("#1F2A8E")  # blue – deterministic graph nodes
+    COL_LLM      = HexColor("#5B21B6")  # purple – cause ranker (optional)
+    COL_GEN      = HexColor("#0E7490")  # cyan – answer generation
+    COL_DECISION = HexColor("#B45309")  # amber – decision diamond
+    COL_INTR     = HexColor("#B91C1C")  # red – human interrupt
+    COL_CRITIC   = HexColor("#15803D")  # green – critic
+    COL_END      = HexColor("#334155")  # slate – terminal
+    ARROW_GREY   = HexColor("#475569")
+
+    # Reusable primitives ---------------------------------------------------
+
+    def pipe_node(label, x_left, y_center, width, height, color,
+                  dashed=False, sub=None):
+        """Rounded rectangle with centred white bold label (+ optional sub)."""
         c.setFillColor(color)
-        c.roundRect(x, by, w, h, 4, fill=1, stroke=0)
-        c.setFillColor("white")
-        c.setFont("Helvetica-Bold", 8.5)
-        for i, line in enumerate(label.split("\n")):
-            c.drawCentredString(x + w / 2, by + h - 12 - i * 10, line)
+        c.setStrokeColor(color)
+        c.setLineWidth(1.0)
+        if dashed:
+            c.setDash([3, 2], 0)
+        c.roundRect(x_left, y_center - height / 2, width, height, 5,
+                    fill=1, stroke=1)
+        c.setDash([], 0)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 9)
+        if sub:
+            c.drawCentredString(x_left + width / 2, y_center + 2, label)
+            c.setFont("Helvetica", 7)
+            c.drawCentredString(x_left + width / 2, y_center - 8, sub)
+        else:
+            c.drawCentredString(x_left + width / 2, y_center - 3, label)
 
-    # arrows row
-    arrow_y = y - 16
-    for x_from, w_from, gap in [
-        (36, 90, 132),    # format → detect_purchase
-        (132, 110, 248),  # detect_purchase → retrieve
-        (248, 90, 344),   # retrieve → rank_causes (conditional)
-        (344, 100, 450),  # rank_causes → generate
-        (450, 90, 546),   # generate → criticality_check
-    ]:
-        c.setStrokeColor("#444")
-        c.setLineWidth(0.8)
-        c.line(x_from + w_from + 1, arrow_y, gap - 1, arrow_y)
-        c.line(gap - 5, arrow_y - 3, gap - 1, arrow_y)
-        c.line(gap - 5, arrow_y + 3, gap - 1, arrow_y)
+    def terminal_pill(label, cx, cy, color=COL_END):
+        """START / END pill — slate background, white serif label."""
+        w, h = 50, 20
+        c.setFillColor(color)
+        c.setStrokeColor(color)
+        c.roundRect(cx - w / 2, cy - h / 2, w, h, 10, fill=1, stroke=1)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(cx, cy - 3, label)
 
-    # criticality_check branches
-    c.setStrokeColor("#e65100")
-    c.setLineWidth(1.0)
-    # → human_approval (down-right)
-    c.line(606, y - 30, 672, y - 60)
-    c.setFillColor("#e65100")
+    def diamond(label, sub, cx, cy, half_w, half_h, color):
+        """Decision diamond with two-line label, white text."""
+        c.setFillColor(color)
+        c.setStrokeColor(color)
+        c.setLineWidth(1.0)
+        p = c.beginPath()
+        p.moveTo(cx, cy + half_h)
+        p.lineTo(cx + half_w, cy)
+        p.lineTo(cx, cy - half_h)
+        p.lineTo(cx - half_w, cy)
+        p.close()
+        c.drawPath(p, fill=1, stroke=1)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(cx, cy + 2, label)
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(cx, cy - 8, sub)
+
+    def arrow(x1, y1, x2, y2, label=None, label_above=True,
+              color=ARROW_GREY, dashed=False):
+        """Straight arrow with a closed arrowhead and optional italic label."""
+        c.setStrokeColor(color)
+        c.setFillColor(color)
+        c.setLineWidth(1.1)
+        if dashed:
+            c.setDash([3, 2], 0)
+        c.line(x1, y1, x2, y2)
+        c.setDash([], 0)
+        angle = math.atan2(y2 - y1, x2 - x1)
+        head = 6.5
+        ax = x2 - head * math.cos(angle - math.pi / 8)
+        ay = y2 - head * math.sin(angle - math.pi / 8)
+        bx = x2 - head * math.cos(angle + math.pi / 8)
+        by = y2 - head * math.sin(angle + math.pi / 8)
+        p = c.beginPath()
+        p.moveTo(x2, y2)
+        p.lineTo(ax, ay)
+        p.lineTo(bx, by)
+        p.close()
+        c.drawPath(p, fill=1, stroke=0)
+        if label:
+            c.setFillColor(TITLE_COLOR)
+            c.setFont("Helvetica-Oblique", 7.5)
+            mx = (x1 + x2) / 2
+            my = (y1 + y2) / 2 + (4 if label_above else -8)
+            c.drawCentredString(mx, my, label)
+
+    # ── Row 1: linear pipeline ─────────────────────────────────────────────
+    row1_y = title_y - 45
+    start_cx = 56
+    NODE_H = 28
+    pipeline_nodes = [
+        ("format",          76,  COL_COMPUTE),
+        ("detect_purchase", 102, COL_COMPUTE),
+        ("retrieve",        76,  COL_COMPUTE),
+        ("rank_causes",     86,  COL_LLM),
+        ("generate",        76,  COL_GEN),
+    ]
+    gap = 12
+    cursor = start_cx + 25 + gap  # right edge of START pill + gap
+    centres = []
+    for _, w, _ in pipeline_nodes:
+        centres.append(cursor + w / 2)
+        cursor += w + gap
+
+    terminal_pill("START", start_cx, row1_y)
+    arrow(start_cx + 25, row1_y,
+          centres[0] - pipeline_nodes[0][1] / 2, row1_y)
+    for i, ((label, w, color), cx) in enumerate(zip(pipeline_nodes, centres)):
+        pipe_node(label, cx - w / 2, row1_y, w, NODE_H, color,
+                  dashed=(label == "rank_causes"))
+        if i + 1 < len(pipeline_nodes):
+            next_w = pipeline_nodes[i + 1][1]
+            arrow(cx + w / 2, row1_y,
+                  centres[i + 1] - next_w / 2, row1_y)
+
+    gen_cx = centres[-1]
+    gen_bottom = row1_y - NODE_H / 2
+
+    # ── Row 2: decision diamond directly under `generate` ─────────────────
+    decision_cy = row1_y - 60
+    diamond_half_w, diamond_half_h = 100, 28
+    diamond_cx = gen_cx
+    diamond_top_y = decision_cy + diamond_half_h
+    diamond_bottom_y = decision_cy - diamond_half_h
+
+    diamond("criticality_check",
+            "risk.score \u2265 HITL_RISK_THRESHOLD ?",
+            diamond_cx, decision_cy, diamond_half_w, diamond_half_h,
+            COL_DECISION)
+
+    # Short vertical arrow from generate down to the top of the diamond.
+    arrow(gen_cx, gen_bottom, diamond_cx, diamond_top_y)
+
+    # ── Row 3: critic (left) + human_approval (right) ─────────────────────
+    row3_y = decision_cy - 60
+    critic_w, critic_h = 110, NODE_H
+    interrupt_w, interrupt_h = 130, NODE_H
+    critic_cx = diamond_cx - 200      # well to the left of the diamond
+    interrupt_cx = diamond_cx + 110   # close to the right vertex
+
+    pipe_node("critic", critic_cx - critic_w / 2, row3_y, critic_w, critic_h,
+              COL_CRITIC,
+              sub="CRITIC_MODEL  \u00b7  qwen2.5:3b")
+    pipe_node("human_approval",
+              interrupt_cx - interrupt_w / 2, row3_y,
+              interrupt_w, interrupt_h, COL_INTR, dashed=True,
+              sub="interrupt() \u00b7 SqliteSaver pause")
+
+    # Diamond → critic   (auto-approve, left branch)
+    arrow(diamond_cx - diamond_half_w + 4, decision_cy - 4,
+          critic_cx + critic_w / 2, row3_y + critic_h / 2,
+          label="auto-approve",
+          color=COL_DECISION)
+    # Diamond → human_approval (needs_human, right branch)
+    arrow(diamond_cx + diamond_half_w - 4, decision_cy - 4,
+          interrupt_cx - interrupt_w / 2, row3_y + interrupt_h / 2,
+          label="needs_human",
+          color=COL_DECISION)
+
+    # human_approval → critic (approved). Horizontal arrow at row 3's
+    # centerline passing through the empty space between the two boxes
+    # — it never crosses a body because the diamond above leaves a
+    # clean corridor exactly here.
+    approved_x1 = interrupt_cx - interrupt_w / 2 - 2
+    approved_x2 = critic_cx + critic_w / 2 + 2
+    arrow(approved_x1, row3_y, approved_x2, row3_y, color=COL_INTR)
+    c.setFillColor(TITLE_COLOR)
     c.setFont("Helvetica-Oblique", 7.5)
-    c.drawString(610, y - 38, "needs_human")
-    # → critic (right)
-    c.line(666, y - 16, 672, y - 16)
-    c.line(670, y - 13, 672, y - 16)
-    c.line(670, y - 19, 672, y - 16)
-    c.drawString(610, y - 12, "auto-approve")
-    # human_approval → critic (when approved)
-    c.line(737, y - 35, 737, y - 16)
-    c.drawString(680, y - 28, "approved")
-    # human_approval → END (when rejected)
-    c.line(802, y - 35, 793, y - 16)
-    c.drawString(770, y - 38, "rejected")
-    # critic → END
-    c.line(762, y - 16, 768, y - 16)
-    c.line(766, y - 13, 768, y - 16)
-    c.line(766, y - 19, 768, y - 16)
+    c.drawCentredString((approved_x1 + approved_x2) / 2, row3_y + 5,
+                        "approved")
 
-    # ── Risk score breakdown table ──
-    table_y = y - 110
+    # ── Row 4: terminal END pills ─────────────────────────────────────────
+    row4_y = row3_y - 42
+    end_pass_cx = critic_cx
+    end_reject_cx = interrupt_cx + interrupt_w / 2 + 50
+
+    # critic → END (PASS). Straight vertical arrow; the label sits in
+    # the empty space to the *right* of the arrow so it never lands on
+    # the END pill.
+    arrow(critic_cx, row3_y - critic_h / 2,
+          end_pass_cx, row4_y + 11,
+          color=COL_CRITIC)
+    c.setFillColor(COL_CRITIC)
+    c.setFont("Helvetica-Oblique", 7.5)
+    c.drawString(critic_cx + 8, (row3_y - critic_h / 2 + row4_y + 11) / 2 - 2,
+                 "PASS / max retries")
+    terminal_pill("END", end_pass_cx, row4_y, COL_END)
+
+    # human_approval → END (rejected) — drop right then over.
+    rejected_label_x = (interrupt_cx + interrupt_w / 2 + end_reject_cx) / 2
+    arrow(interrupt_cx + interrupt_w / 2 + 2, row3_y - 4,
+          end_reject_cx - 25, row3_y - 4,
+          color=COL_INTR)
+    arrow(end_reject_cx - 25 + 12, row3_y - 4,
+          end_reject_cx, row4_y + 8,
+          label="rejected",
+          color=COL_INTR)
+    terminal_pill("END", end_reject_cx, row4_y, COL_END)
+
+    # ── Compact legend strip under row 4 ──────────────────────────────────
+    legend_y = row4_y - 20
+    legend_items = [
+        (COL_COMPUTE,  "deterministic"),
+        (COL_LLM,      "optional cause-ranker"),
+        (COL_GEN,      "answer LLM"),
+        (COL_DECISION, "decision (risk gate)"),
+        (COL_INTR,     "human interrupt"),
+        (COL_CRITIC,   "critic"),
+        (COL_END,      "terminal"),
+    ]
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(36, legend_y, "Legend")
+    c.setFont("Helvetica", 7.5)
+    x_cursor = 76
+    for color, label in legend_items:
+        c.setFillColor(color)
+        c.rect(x_cursor, legend_y - 1, 9, 8, fill=1, stroke=0)
+        c.setFillColor(TITLE_COLOR)
+        c.drawString(x_cursor + 13, legend_y, label)
+        x_cursor += 13 + len(label) * 4.4 + 14
+
+    # Anchor for the risk-drivers section below.
+    y = legend_y - 6
+
+    # ── Risk score breakdown table ─────────────────────────────────────────
+    # `y` already points just below the topology legend, so the table sits
+    # naturally beneath the diagram without any magic offset.
+    table_y = y - 8
     c.setFillColor(TITLE_COLOR)
     c.setFont("Helvetica-Bold", 11)
     c.drawString(36, table_y, "Risk score drivers — core/criticality_classifier.py")
@@ -743,44 +931,45 @@ def draw_page4(c):
         ("llm_grader:*", "Tier-2 LLM grader (only fires for inconclusive 0.3–0.7 band)", "max(score, llm_score)", "any"),
     ]
     col_widths = [130, 360, 130, 90]
-    table_y2 = draw_table(c, 36, table_y - 18, headers, rows, col_widths,
-                           font_size=8, row_height=15)
+    table_y2 = draw_table(c, 36, table_y - 14, headers, rows, col_widths,
+                           font_size=7.5, row_height=13)
 
-    # ── Bottom: API surface + decision flow ──
-    bottom_y = table_y2 - 30
+    # ── Bottom: API surface + decision flow ────────────────────────────────
+    bottom_y = table_y2 - 22
     c.setFillColor(TITLE_COLOR)
-    c.setFont("Helvetica-Bold", 11)
+    c.setFont("Helvetica-Bold", 10.5)
     c.drawString(36, bottom_y, "REST surface (api/server.py)")
     api_box = [
         ("GET  /api/approvals/pending",            "list paused HITL workflows"),
         ("GET  /api/approvals/{thread_id}",        "snapshot of one paused workflow"),
         ("POST /api/approvals/{thread_id}/resume", "{approved, approver, comments, edited_answer?}"),
+        ("GET  /api/approvals/my",                  "buckets pending / pending_for_me / actioned"),
         ("GET  /api/audit?limit=N&offset=M",       "recent decisions + approval-rate stats"),
     ]
-    c.setFont("Helvetica", 8.5)
+    c.setFont("Helvetica", 8)
     for i, (route, desc) in enumerate(api_box):
-        c.setFillColor("#283593")
-        c.drawString(36, bottom_y - 16 - i * 13, route)
+        c.setFillColor(HexColor("#1E3A8A"))
+        c.drawString(36, bottom_y - 14 - i * 11, route)
         c.setFillColor(SUBTITLE_COLOR)
-        c.drawString(280, bottom_y - 16 - i * 13, desc)
+        c.drawString(248, bottom_y - 14 - i * 11, desc)
 
-    # State machine on the right
-    sm_x = 540
+    # State machine on the right (compact, no overlap with right margin).
+    sm_x = 500
     c.setFillColor(TITLE_COLOR)
-    c.setFont("Helvetica-Bold", 11)
+    c.setFont("Helvetica-Bold", 10.5)
     c.drawString(sm_x, bottom_y, "Pipeline status state machine")
     c.setFillColor(SUBTITLE_COLOR)
-    c.setFont("Helvetica", 8.5)
+    c.setFont("Helvetica", 8)
     sm_lines = [
-        "in_progress  →  awaiting_approval  →  complete    (approved)",
-        "in_progress  →  awaiting_approval  →  rejected    (approved=false)",
-        "in_progress  →  complete                          (auto-approve / USE_HITL=false)",
+        "in_progress \u2192 awaiting_approval \u2192 complete   (approved)",
+        "in_progress \u2192 awaiting_approval \u2192 rejected   (approved=false)",
+        "in_progress \u2192 complete                         (auto-approve / USE_HITL=false)",
         "",
-        "Checkpointer: SqliteSaver (HITL_DB_PATH) — survives restarts.",
-        "Audit log:    core/audit_log.py — append-only, one row per decision.",
+        "Checkpointer: SqliteSaver (HITL_DB_PATH) \u2014 survives restarts.",
+        "Audit log:    core/audit_log.py \u2014 append-only, one row per decision.",
     ]
     for i, line in enumerate(sm_lines):
-        c.drawString(sm_x, bottom_y - 16 - i * 12, line)
+        c.drawString(sm_x, bottom_y - 14 - i * 11, line)
 
     draw_page_footer(
         c,
