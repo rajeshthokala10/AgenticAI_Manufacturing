@@ -34,22 +34,37 @@ logger = logging.getLogger("core.audit")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS approvals (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts              REAL    NOT NULL,             -- unix epoch seconds
-    thread_id       TEXT    NOT NULL,
-    decision        TEXT    NOT NULL,             -- 'approved' | 'rejected'
-    approver        TEXT    NOT NULL DEFAULT 'unknown',
-    risk_score      REAL    NOT NULL DEFAULT 0.0,
-    drivers_json    TEXT    NOT NULL DEFAULT '[]',
-    domain          TEXT    NOT NULL DEFAULT 'diagnostic',  -- 'diagnostic' | 'purchase_request' | …
-    query           TEXT    NOT NULL DEFAULT '',
-    proposed_answer TEXT    NOT NULL DEFAULT '',
-    edited_answer   TEXT,
-    comments        TEXT
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  REAL    NOT NULL,             -- unix epoch seconds
+    thread_id           TEXT    NOT NULL,
+    decision            TEXT    NOT NULL,             -- 'approved' | 'rejected'
+    approver            TEXT    NOT NULL DEFAULT 'unknown',
+    risk_score          REAL    NOT NULL DEFAULT 0.0,
+    drivers_json        TEXT    NOT NULL DEFAULT '[]',
+    domain              TEXT    NOT NULL DEFAULT 'diagnostic',  -- 'diagnostic' | 'purchase_request' | …
+    query               TEXT    NOT NULL DEFAULT '',
+    proposed_answer     TEXT    NOT NULL DEFAULT '',
+    edited_answer       TEXT,
+    comments            TEXT,
+    -- RBAC additions (Phase D). Older DBs created without these columns are
+    -- migrated in `_init_schema` via additive ALTER TABLE statements.
+    maker_user_id       TEXT,
+    approver_user_id    TEXT,
+    approver_role       TEXT,
+    required_roles_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_thread ON approvals(thread_id);
 CREATE INDEX IF NOT EXISTS idx_approvals_ts     ON approvals(ts DESC);
 """
+
+# Columns added in the RBAC iteration. Used by ``_init_schema`` so DBs created
+# before Phase D continue to work (SQLite has no `ADD COLUMN IF NOT EXISTS`).
+_RBAC_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("maker_user_id",       "TEXT"),
+    ("approver_user_id",    "TEXT"),
+    ("approver_role",       "TEXT"),
+    ("required_roles_json", "TEXT NOT NULL DEFAULT '[]'"),
+)
 
 
 @dataclass
@@ -66,6 +81,10 @@ class AuditEntry:
     edited_answer: Optional[str] = None
     comments: Optional[str] = None
     id: Optional[int] = field(default=None)
+    maker_user_id: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_role: Optional[str] = None
+    required_roles: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -82,6 +101,10 @@ class AuditEntry:
             "proposed_answer": self.proposed_answer,
             "edited_answer": self.edited_answer,
             "comments": self.comments,
+            "maker_user_id": self.maker_user_id,
+            "approver_user_id": self.approver_user_id,
+            "approver_role": self.approver_role,
+            "required_roles": self.required_roles,
         }
 
 
@@ -110,6 +133,14 @@ class AuditLog:
     def _init_schema(self) -> None:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # Additive migration for DBs created before Phase D. SQLite has no
+            # `ADD COLUMN IF NOT EXISTS`, so we introspect first.
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(approvals)")
+            }
+            for col, ddl in _RBAC_COLUMNS:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE approvals ADD COLUMN {col} {ddl}")
 
     # ─── Writers ──────────────────────────────────────────────────────────
 
@@ -127,19 +158,26 @@ class AuditLog:
         edited_answer: Optional[str] = None,
         comments: Optional[str] = None,
         ts: Optional[float] = None,
+        maker_user_id: Optional[str] = None,
+        approver_user_id: Optional[str] = None,
+        approver_role: Optional[str] = None,
+        required_roles: Optional[Iterable[str]] = None,
     ) -> int:
         """Insert a decision row. Returns the new row id."""
         if decision not in ("approved", "rejected"):
             raise ValueError(f"decision must be 'approved' or 'rejected', got {decision!r}")
         drivers_list = list(drivers or [])
+        required_list = list(required_roles or [])
         with self._conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO approvals
                   (ts, thread_id, decision, approver, risk_score,
                    drivers_json, domain, query, proposed_answer,
-                   edited_answer, comments)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   edited_answer, comments,
+                   maker_user_id, approver_user_id, approver_role,
+                   required_roles_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts if ts is not None else time.time(),
@@ -153,6 +191,10 @@ class AuditLog:
                     proposed_answer,
                     edited_answer,
                     comments,
+                    maker_user_id,
+                    approver_user_id,
+                    approver_role,
+                    json.dumps(required_list),
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -195,12 +237,19 @@ class AuditLog:
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> AuditEntry:
-        try:
-            drivers = json.loads(row["drivers_json"] or "[]")
-            if not isinstance(drivers, list):
-                drivers = []
-        except json.JSONDecodeError:
-            drivers = []
+        def _list_or_empty(key: str) -> List[str]:
+            try:
+                # Older rows may not have the column at all → KeyError-safe.
+                raw = row[key] if key in row.keys() else "[]"
+            except (IndexError, KeyError):
+                raw = "[]"
+            try:
+                parsed = json.loads(raw or "[]")
+            except (TypeError, json.JSONDecodeError):
+                parsed = []
+            return parsed if isinstance(parsed, list) else []
+
+        keys = set(row.keys())
         return AuditEntry(
             id=int(row["id"]),
             ts=float(row["ts"]),
@@ -208,12 +257,18 @@ class AuditLog:
             decision=row["decision"],
             approver=row["approver"],
             risk_score=float(row["risk_score"]),
-            drivers=drivers,
+            drivers=_list_or_empty("drivers_json"),
             domain=row["domain"],
             query=row["query"],
             proposed_answer=row["proposed_answer"],
             edited_answer=row["edited_answer"],
             comments=row["comments"],
+            maker_user_id=(row["maker_user_id"] if "maker_user_id" in keys else None),
+            approver_user_id=(
+                row["approver_user_id"] if "approver_user_id" in keys else None
+            ),
+            approver_role=(row["approver_role"] if "approver_role" in keys else None),
+            required_roles=_list_or_empty("required_roles_json"),
         )
 
 

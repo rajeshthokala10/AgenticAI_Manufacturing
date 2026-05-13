@@ -26,7 +26,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from api.auth import (  # noqa: E402
+    get_optional_user,
+    require_user,
+    router as auth_router,
+)
 from api.serializers import serialize_state, serialize_turn  # noqa: E402
 from config import (  # noqa: E402
     EMBEDDING_MODEL,
@@ -43,6 +48,8 @@ from config import (  # noqa: E402
     llm_available,
 )
 from core.audit_log import get_default_log  # noqa: E402
+from core.auth_store import UserRecord  # noqa: E402
+from core.rbac import can_approve, is_maker_locked, required_roles_for  # noqa: E402
 from pipeline import ChatAgent, ChatState, ManufacturingPipeline  # noqa: E402
 
 logger = logging.getLogger("api.server")
@@ -72,6 +79,7 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=False,
 )
+app.include_router(auth_router)
 
 
 class _Singleton:
@@ -148,7 +156,10 @@ def stats() -> Dict:
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest) -> Dict:
+def chat(
+    req: ChatRequest,
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> Dict:
     if not _Singleton.ready or _Singleton.agent is None:
         raise HTTPException(503, detail="Pipeline still bootstrapping — try again in a moment.")
     if not req.message.strip():
@@ -167,6 +178,10 @@ def chat(req: ChatRequest) -> Dict:
         # find the originating session.
         if state.pending_approval_thread_id:
             _Singleton.thread_to_session[state.pending_approval_thread_id] = req.session_id
+            # Phase D: stamp the maker identity + required-roles policy onto
+            # the pending entry. The orchestrator built the entry but doesn't
+            # know about users/RBAC.
+            _annotate_new_pending(state.pending_approval_thread_id, user)
 
         new_turns = state.turns[-6:]
         body = {
@@ -178,6 +193,21 @@ def chat(req: ChatRequest) -> Dict:
         if state.pending_approval_thread_id:
             body["approval_thread_id"] = state.pending_approval_thread_id
         return body
+
+
+def _annotate_new_pending(thread_id: str, user: Optional[UserRecord]) -> None:
+    """Attach maker_user_id + computed required_roles to a newly paused thread."""
+    pipe = _Singleton.pipe
+    if pipe is None or not hasattr(pipe, "annotate_pending"):
+        return
+    pending = pipe.get_pending_approval(thread_id) or {}
+    drivers = (pending.get("risk") or {}).get("drivers", []) or []
+    required = required_roles_for(drivers, pending.get("purchase_request"))
+    pipe.annotate_pending(
+        thread_id,
+        maker_user_id=(user.user_id if user is not None else None),
+        required_roles=required,
+    )
 
 
 @app.post("/api/reset")
@@ -219,65 +249,136 @@ def _require_hitl() -> None:
         raise HTTPException(503, detail="Pipeline not ready")
 
 
+def _enrich_pending(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Decorate a raw pending entry with session id + RBAC fields the UI needs."""
+    thread_id = entry.get("thread_id")
+    drivers = (entry.get("risk") or {}).get("drivers", []) or []
+    purchase = entry.get("purchase_request")
+    # The annotate_pending() hook usually fills required_roles already, but
+    # recompute as a defence-in-depth fallback (e.g. pre-Phase-D paused
+    # threads recovered from SQLite checkpointer).
+    required = entry.get("required_roles") or required_roles_for(drivers, purchase)
+    return {
+        **entry,
+        "session_id": _Singleton.thread_to_session.get(thread_id),
+        "required_roles": list(required),
+        "maker_user_id": entry.get("maker_user_id"),
+    }
+
+
 @app.get("/api/approvals/pending")
-def list_pending_approvals() -> Dict[str, Any]:
+def list_pending_approvals(
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> Dict[str, Any]:
     _require_hitl()
     pending = _Singleton.pipe.pending_approvals()
-    enriched: List[Dict[str, Any]] = []
-    for entry in pending:
-        thread_id = entry.get("thread_id")
-        enriched.append({
-            **entry,
-            "session_id": _Singleton.thread_to_session.get(thread_id),
-        })
+    enriched = [_enrich_pending(entry) for entry in pending]
+    # If the caller is authenticated, surface a per-item "can_i_approve" flag
+    # so the UI can grey out items they can't action.
+    if user is not None:
+        for item in enriched:
+            item["can_current_user_approve"] = (
+                can_approve(user.role, item["required_roles"])
+                and not is_maker_locked(user.user_id, item.get("maker_user_id"))
+            )
     return {"pending": enriched, "count": len(enriched)}
 
 
 @app.get("/api/approvals/{thread_id}")
-def get_approval(thread_id: str) -> Dict[str, Any]:
+def get_approval(
+    thread_id: str,
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> Dict[str, Any]:
     _require_hitl()
     entry = _Singleton.pipe.get_pending_approval(thread_id)
     if entry is None:
         raise HTTPException(404, detail=f"No pending approval for thread {thread_id}")
-    return {
-        **entry,
-        "session_id": _Singleton.thread_to_session.get(thread_id),
-    }
+    enriched = _enrich_pending(entry)
+    if user is not None:
+        enriched["can_current_user_approve"] = (
+            can_approve(user.role, enriched["required_roles"])
+            and not is_maker_locked(user.user_id, enriched.get("maker_user_id"))
+        )
+    return enriched
 
 
 @app.post("/api/approvals/{thread_id}/resume")
-def resume_approval(thread_id: str, decision: ApprovalDecision) -> Dict[str, Any]:
+def resume_approval(
+    thread_id: str,
+    decision: ApprovalDecision,
+    user: UserRecord = Depends(require_user),
+) -> Dict[str, Any]:
+    """Approve or reject a paused workflow.
+
+    Authentication is **required**. The caller's role must intersect the
+    pending item's ``required_roles``, and the caller's user-id must NOT
+    match the maker's (segregation of duties).
+    """
     _require_hitl()
     pending = _Singleton.pipe.get_pending_approval(thread_id)
     if pending is None:
         raise HTTPException(404, detail=f"No pending approval for thread {thread_id}")
 
+    # ── RBAC: only role-holders listed in required_roles may resolve ─────
+    drivers = (pending.get("risk") or {}).get("drivers", []) or []
+    required = pending.get("required_roles") or required_roles_for(
+        drivers, pending.get("purchase_request")
+    )
+    if not can_approve(user.role, required):
+        raise HTTPException(
+            403,
+            detail=(
+                f"Your role '{user.role}' is not authorised for this approval. "
+                f"Required role(s): {', '.join(required)}."
+            ),
+        )
+
+    # ── Maker-lock: the request submitter cannot self-approve ────────────
+    maker_user_id = pending.get("maker_user_id")
+    if is_maker_locked(user.user_id, maker_user_id):
+        raise HTTPException(
+            409,
+            detail=(
+                "Segregation of duties: you are the request submitter "
+                f"({maker_user_id!r}) and cannot approve your own escalation. "
+                "Have a different role-holder review it."
+            ),
+        )
+
+    # The audit log records the *real* approver, ignoring whatever the
+    # client sent in the (legacy) ``approver`` field — the token wins.
+    effective_decision = decision.copy(update={
+        "approver": user.display_name or user.user_id,
+    })
+
     session_id = _Singleton.thread_to_session.get(thread_id)
     if session_id is None or session_id not in _Singleton.sessions:
         # Resume detached from any session — still works, just no chat-thread update.
         try:
-            result = _Singleton.pipe.resume_diagnostic(thread_id, decision.dict())
+            result = _Singleton.pipe.resume_diagnostic(thread_id, effective_decision.dict())
         except Exception as exc:
             logger.exception("Detached resume failure on thread %s", thread_id)
             raise HTTPException(500, detail=f"Resume error: {exc!r}") from exc
-        _record_audit(thread_id, decision, pending)
+        _record_audit(thread_id, effective_decision, pending, user, required)
         return {
             "thread_id": thread_id,
             "answer": result.answer,
             "rejected": result.rejected,
             "pipeline_status": result.pipeline_status,
             "session_id": None,
+            "approver_user_id": user.user_id,
+            "approver_role": user.role,
         }
 
     lock = _get_session_lock(session_id)
     with lock:
         state = _Singleton.sessions[session_id]
         try:
-            _Singleton.agent.apply_resolution(state, thread_id, decision.dict())
+            _Singleton.agent.apply_resolution(state, thread_id, effective_decision.dict())
         except Exception as exc:
             logger.exception("Resume failure on thread %s", thread_id)
             raise HTTPException(500, detail=f"Resume error: {exc!r}") from exc
-        _record_audit(thread_id, decision, pending)
+        _record_audit(thread_id, effective_decision, pending, user, required)
         # Clear the pending mapping if the agent finished resolving.
         if not state.pending_approval_thread_id:
             _Singleton.thread_to_session.pop(thread_id, None)
@@ -287,10 +388,18 @@ def resume_approval(thread_id: str, decision: ApprovalDecision) -> Dict[str, Any
             "thread_id": thread_id,
             "new_turns": [serialize_turn(t) for t in new_turns],
             "state": serialize_state(state),
+            "approver_user_id": user.user_id,
+            "approver_role": user.role,
         }
 
 
-def _record_audit(thread_id: str, decision: ApprovalDecision, pending: Dict[str, Any]) -> None:
+def _record_audit(
+    thread_id: str,
+    decision: ApprovalDecision,
+    pending: Dict[str, Any],
+    user: Optional[UserRecord] = None,
+    required_roles: Optional[List[str]] = None,
+) -> None:
     try:
         risk = pending.get("risk", {}) or {}
         purchase = pending.get("purchase_request")
@@ -305,6 +414,10 @@ def _record_audit(thread_id: str, decision: ApprovalDecision, pending: Dict[str,
             proposed_answer=pending.get("answer", ""),
             edited_answer=decision.edited_answer,
             comments=decision.comments,
+            maker_user_id=pending.get("maker_user_id"),
+            approver_user_id=(user.user_id if user is not None else None),
+            approver_role=(user.role if user is not None else None),
+            required_roles=required_roles or pending.get("required_roles") or [],
         )
     except Exception:  # pragma: no cover — audit must never break the request
         logger.exception("Failed to write audit log entry for thread %s", thread_id)
@@ -325,4 +438,6 @@ def root() -> Dict:
         "docs": "/docs",
         "health": "/api/health",
         "approvals": "/api/approvals/pending",
+        "auth": "/api/auth/login",
+        "roles": "/api/auth/roles",
     }

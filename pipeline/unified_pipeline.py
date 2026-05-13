@@ -370,6 +370,31 @@ class ManufacturingPipeline:
             return None
         return self.orchestrator.get_pending(thread_id)
 
+    def annotate_pending(
+        self,
+        thread_id: str,
+        *,
+        maker_user_id: Optional[str] = None,
+        required_roles: Optional[List[str]] = None,
+    ) -> bool:
+        """Attach RBAC metadata to an existing pending approval.
+
+        Called by the API layer *after* ``diagnostic()`` produced a pending
+        thread so the policy and the maker identity are stored alongside the
+        proposal. Returns ``True`` if the pending entry was found.
+        """
+        if self._orchestrator_engine != "langgraph" or self.orchestrator is None:
+            return False
+        pending = getattr(self.orchestrator, "_pending", None)
+        if pending is None or thread_id not in pending:
+            return False
+        entry = pending[thread_id]
+        if maker_user_id is not None:
+            entry["maker_user_id"] = maker_user_id
+        if required_roles is not None:
+            entry["required_roles"] = list(required_roles)
+        return True
+
     def _wrap_diagnostic_result(
         self,
         query: str,

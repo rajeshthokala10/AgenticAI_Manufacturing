@@ -213,8 +213,93 @@ def test_audit_log():
     assert stats["rejected"] >= 1
 
 
+def test_rbac_routing():
+    print("\n[6] RBAC — driver → required-roles mapping")
+    from core.rbac import required_roles_for, can_approve, is_maker_locked, USE_CASES
+
+    cases = [
+        (["safety_keyword:lockout"], {"maintenance_engineer", "ehs_officer"}),
+        (["safety_keyword:hot work"], {"ehs_officer"}),
+        (["safety_keyword:emergency", "safety_keyword:shutdown"],
+         {"shift_supervisor", "ehs_officer", "plant_manager", "maintenance_engineer"}),
+        (["purchase_value=$5,000>=$2,000"], {"buyer"}),
+        (["purchase_value=$35,000>=$2,000"], {"procurement_manager"}),
+        (["purchase_value=$150,000>=$2,000"], {"procurement_manager", "plant_manager"}),
+        (["safety_keyword:fatal"], {"ehs_officer", "plant_manager"}),
+    ]
+    for drivers, expected in cases:
+        got = set(required_roles_for(drivers))
+        ok = expected.issubset(got)
+        flag = "✅" if ok else "❌"
+        print(f"  {flag} {drivers} → {sorted(got)}  expected ⊇ {sorted(expected)}")
+        assert ok, f"required_roles_for{drivers} = {got}, expected ⊇ {expected}"
+
+    print("\n  can_approve checks:")
+    assert not can_approve("operator", ["ehs_officer"]), "operator must not approve EHS items"
+    assert can_approve("ehs_officer", ["ehs_officer", "maintenance_engineer"])
+    assert not can_approve(None, ["ehs_officer"])
+    print("    ✅ operator cannot, ehs_officer can, anonymous cannot")
+
+    print("\n  maker-lock checks:")
+    assert is_maker_locked("alice@plant.local", "Alice@Plant.Local"), "case-insensitive lock"
+    assert not is_maker_locked("alice@plant.local", "dave.ehs@plant.local")
+    assert not is_maker_locked("", "x")
+    print("    ✅ self-approval blocked, cross-approval allowed, empty=safe")
+
+    print(f"\n  Use-case catalogue rows: {len(USE_CASES)} (all wired into core.rbac.USE_CASES)")
+
+
+def test_auth_store_and_seeding():
+    print("\n[7] Auth store — login + token round-trip")
+    # Use a private DB so we don't clobber the real one.
+    from pathlib import Path
+    import tempfile
+    from core.auth_store import UserStore, AuthError
+
+    tmp = Path(tempfile.mkdtemp()) / "auth_smoketest.sqlite"
+    store = UserStore(tmp, seed_demo=True)
+    user, tok, exp = store.login("alice@plant.local", "operator123")
+    assert user.role == "operator"
+    assert exp > 0
+    resolved = store.user_for_token(tok)
+    assert resolved is not None and resolved.user_id == "alice@plant.local"
+    print(f"    ✅ login + token round-trip for {user.user_id} role={user.role}")
+
+    try:
+        store.login("alice@plant.local", "wrong-password")
+        raise AssertionError("expected AuthError")
+    except AuthError:
+        print("    ✅ wrong password rejected")
+
+    assert store.user_for_token("garbage") is None
+    print("    ✅ invalid token rejected")
+    tmp.unlink(missing_ok=True)
+
+
+def test_pipeline_annotate(orch):
+    print("\n[8] Pipeline — annotate_pending attaches maker + required roles")
+    # Pause on a high-risk query
+    out = orch.process_query("What is the lockout/tagout procedure for pump P-203?")
+    thread_id = out["approval_thread_id"]
+    # The orchestrator owns the pending dict directly here (no ManufacturingPipeline
+    # wrapper in this smoke test), so we poke its `_pending` dict via the same
+    # path `unified_pipeline.annotate_pending` uses internally.
+    orch._pending[thread_id]["maker_user_id"] = "alice@plant.local"
+    from core.rbac import required_roles_for
+    orch._pending[thread_id]["required_roles"] = required_roles_for(
+        out["risk"]["drivers"]
+    )
+    snap = orch.get_pending(thread_id)
+    assert snap["maker_user_id"] == "alice@plant.local"
+    assert "ehs_officer" in snap["required_roles"]
+    print(f"    ✅ pending annotated maker=alice required={snap['required_roles']}")
+    # Resolve so the thread doesn't linger
+    orch.resume(thread_id, {"approved": True, "approver": "dave.ehs@plant.local",
+                            "comments": "ok", "edited_answer": None})
+
+
 def main():
-    print("HITL smoke test — Phases A + B + C")
+    print("HITL smoke test — Phases A + B + C + D (RBAC)")
     orch = _build_orchestrator()
     print(f"checkpointer: {orch.checkpointer_kind}")
 
@@ -223,6 +308,9 @@ def main():
     test_high_risk_reject(orch)
     test_purchase_request(orch)
     test_audit_log()
+    test_rbac_routing()
+    test_auth_store_and_seeding()
+    test_pipeline_annotate(orch)
     print("\nALL SMOKE TESTS PASSED.")
 
 

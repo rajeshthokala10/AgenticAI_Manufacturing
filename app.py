@@ -683,6 +683,13 @@ def tab_approvals() -> None:
         )
         return
 
+    # ── Sign-in (RBAC) ──────────────────────────────────────────────────
+    # Approvals are role-gated and require a maker-lock check, so a signed-in
+    # identity is mandatory. The same SQLite user store backs both the
+    # FastAPI bearer-token flow and this in-process Streamlit form.
+    if not _render_streamlit_signin():
+        return
+
     pending = pipe.pending_approvals()
     state = _ensure_chat_state()
 
@@ -733,12 +740,102 @@ def tab_approvals() -> None:
         st.caption(f"Audit log unavailable: {exc}")
 
 
+def _render_streamlit_signin() -> bool:
+    """Render an in-tab sign-in form. Returns True once a user is signed in.
+
+    Uses the same SQLite store as the FastAPI auth layer so credentials are
+    interchangeable across the two UIs (no separate Streamlit user table).
+    """
+    from core.auth_store import AuthError, get_default_store
+    from core.rbac import ROLES_BY_ID
+
+    user_dict = st.session_state.get("hitl_user")
+    if user_dict:
+        sub_l, sub_r = st.columns([5, 1])
+        sub_l.markdown(
+            f"👤 Signed in as **{user_dict['display_name'] or user_dict['user_id']}** "
+            f"(`{user_dict['user_id']}`) · role: "
+            f"`{user_dict['role']}`"
+        )
+        if sub_r.button("Sign out", key="hitl_signout"):
+            st.session_state.pop("hitl_user", None)
+            st.rerun()
+        return True
+
+    with st.expander("🔐 Sign in to approve", expanded=True):
+        st.caption(
+            "Approvals are role-gated and enforce maker-cannot-be-checker. "
+            "Use one of the demo accounts (see README) or sign up."
+        )
+        with st.form("hitl_signin", clear_on_submit=False):
+            email = st.text_input("User ID", placeholder="dave.ehs@plant.local")
+            pw = st.text_input("Password", type="password")
+            colA, colB = st.columns(2)
+            do_login = colA.form_submit_button("Sign in", type="primary", use_container_width=True)
+            do_signup_toggle = colB.form_submit_button("Sign up instead", use_container_width=True)
+            if do_login and email and pw:
+                try:
+                    user, _token, _exp = get_default_store().login(email, pw)
+                except AuthError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["hitl_user"] = {
+                        "user_id": user.user_id,
+                        "role": user.role,
+                        "display_name": user.display_name,
+                    }
+                    st.rerun()
+            elif do_signup_toggle:
+                st.session_state["hitl_signup_mode"] = True
+                st.rerun()
+
+        if st.session_state.get("hitl_signup_mode"):
+            with st.form("hitl_signup", clear_on_submit=False):
+                em = st.text_input("New user ID (email)")
+                pw2 = st.text_input("Password (≥ 6 chars)", type="password")
+                role_options = list(ROLES_BY_ID.keys())
+                role = st.selectbox(
+                    "Role",
+                    role_options,
+                    format_func=lambda r: f"{ROLES_BY_ID[r].label} — "
+                    f"{'maker' if ROLES_BY_ID[r].is_maker else 'checker'}",
+                )
+                name = st.text_input("Display name (optional)")
+                submitted = st.form_submit_button("Create account", type="primary")
+                if submitted and em and pw2:
+                    try:
+                        get_default_store().signup(em, pw2, role, name)
+                        user, _t, _e = get_default_store().login(em, pw2)
+                    except AuthError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state["hitl_user"] = {
+                            "user_id": user.user_id,
+                            "role": user.role,
+                            "display_name": user.display_name,
+                        }
+                        st.session_state.pop("hitl_signup_mode", None)
+                        st.rerun()
+
+    return False
+
+
 def _render_pending_approval(entry: dict, state: ChatState) -> None:
+    from core.rbac import can_approve, is_maker_locked, required_roles_for
+
     thread_id = entry.get("thread_id", "?")
     risk = entry.get("risk", {}) or {}
     purchase = entry.get("purchase_request")
     domain = "purchase_request" if purchase else "diagnostic"
     score = float(risk.get("score", 0.0))
+    drivers = risk.get("drivers", []) or []
+    required_roles = entry.get("required_roles") or required_roles_for(drivers, purchase)
+    maker_user_id = entry.get("maker_user_id")
+
+    cur_user = st.session_state.get("hitl_user") or {}
+    role_ok = can_approve(cur_user.get("role"), required_roles)
+    maker_locked = is_maker_locked(cur_user.get("user_id"), maker_user_id)
+    user_can_approve = role_ok and not maker_locked
 
     with st.container(border=True):
         head_l, head_r = st.columns([5, 1])
@@ -748,9 +845,18 @@ def _render_pending_approval(entry: dict, state: ChatState) -> None:
         )
         head_r.caption(time.strftime("%H:%M:%S", time.localtime(entry.get("ts", time.time()))))
 
-        if risk.get("drivers"):
-            chips = "".join(f'<span class="hitl-driver">{d}</span>' for d in risk["drivers"][:8])
+        if drivers:
+            chips = "".join(f'<span class="hitl-driver">{d}</span>' for d in drivers[:8])
             st.markdown(chips, unsafe_allow_html=True)
+
+        if required_roles:
+            badges = " ".join(f"`{r}`" for r in required_roles)
+            st.caption(f"Required role(s): {badges}")
+        if maker_user_id:
+            st.caption(
+                f"Submitted by `{maker_user_id}`"
+                + (" (you — segregation of duties prevents self-approval)" if maker_locked else "")
+            )
 
         st.markdown("**User query**")
         st.markdown(f"> {entry.get('raw_query', '')}")
@@ -766,39 +872,59 @@ def _render_pending_approval(entry: dict, state: ChatState) -> None:
             value=proposed,
             height=180,
             key=f"hitl_edit_{thread_id}",
+            disabled=not user_can_approve,
         )
 
         c1, c2, c3 = st.columns([2, 2, 3])
-        approver = c3.text_input(
-            "Approver",
-            value=st.session_state.get(f"hitl_approver_{thread_id}", "demo@plant"),
-            key=f"hitl_approver_{thread_id}",
+        approver_label = cur_user.get("display_name") or cur_user.get("user_id") or "unknown"
+        c3.markdown(
+            f"_Approver:_ **{approver_label}** · _role:_ `{cur_user.get('role', 'unknown')}`"
         )
         comments = c3.text_input(
             "Comments (optional)",
             key=f"hitl_comments_{thread_id}",
+            disabled=not user_can_approve,
         )
 
         approve_clicked = c1.button(
-            "✅ Approve", key=f"hitl_approve_{thread_id}", type="primary",
+            "✅ Approve",
+            key=f"hitl_approve_{thread_id}",
+            type="primary",
             use_container_width=True,
+            disabled=not user_can_approve,
         )
         reject_clicked = c2.button(
-            "❌ Reject", key=f"hitl_reject_{thread_id}",
+            "❌ Reject",
+            key=f"hitl_reject_{thread_id}",
             use_container_width=True,
+            disabled=not user_can_approve,
         )
+
+        if not user_can_approve:
+            if maker_locked:
+                st.warning(
+                    "You submitted this request — segregation of duties prevents you "
+                    "from approving it. Ask a different role-holder to action it."
+                )
+            elif not role_ok:
+                st.info(
+                    f"Your role `{cur_user.get('role', '?')}` is not on this "
+                    f"approval's allow-list. Required: {', '.join(required_roles)}."
+                )
 
         if approve_clicked or reject_clicked:
             decision = {
                 "approved": bool(approve_clicked),
-                "approver": approver or "unknown",
+                "approver": approver_label,
                 "comments": comments or None,
                 "edited_answer": (edited if edited.strip() and edited.strip() != proposed.strip() else None),
             }
             with st.spinner("Resuming workflow…"):
                 try:
                     chat_agent.apply_resolution(state, thread_id, decision)
-                    _record_audit_from_streamlit(thread_id, entry, decision)
+                    _record_audit_from_streamlit(
+                        thread_id, entry, decision, cur_user, required_roles
+                    )
                 except Exception as exc:
                     st.error(f"Resume failed: {exc}")
                     return
@@ -809,7 +935,13 @@ def _render_pending_approval(entry: dict, state: ChatState) -> None:
             st.rerun()
 
 
-def _record_audit_from_streamlit(thread_id: str, entry: dict, decision: dict) -> None:
+def _record_audit_from_streamlit(
+    thread_id: str,
+    entry: dict,
+    decision: dict,
+    user: dict,
+    required_roles: list,
+) -> None:
     """Mirror the FastAPI audit-write so the in-process Streamlit demo also logs."""
     try:
         from core.audit_log import get_default_log
@@ -826,6 +958,10 @@ def _record_audit_from_streamlit(thread_id: str, entry: dict, decision: dict) ->
             proposed_answer=entry.get("answer", ""),
             edited_answer=decision.get("edited_answer"),
             comments=decision.get("comments"),
+            maker_user_id=entry.get("maker_user_id"),
+            approver_user_id=user.get("user_id"),
+            approver_role=user.get("role"),
+            required_roles=required_roles,
         )
     except Exception:
         pass

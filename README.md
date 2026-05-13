@@ -1142,12 +1142,127 @@ Runs five checks without any external LLM call:
    `purchase_value=$5,000>=$2,000` driver.
 5. Audit log writes survive a round-trip and `stats()` reports correct counts.
 
+### Role-based approvals (Phase D)
+
+The approval gate is now **role-gated** with a strict maker-vs-checker rule:
+the user who submitted the request cannot approve their own escalation, and
+each pending item carries a `required_roles` list that the API enforces on
+`POST /api/approvals/{thread_id}/resume`.
+
+**Role catalogue** (one row per checker — operators are makers only):
+
+| Role id                 | Approves …                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `operator`              | _maker only_ — submits queries, never approves.                                       |
+| `shift_supervisor`      | Routine PMs, low-critic-confidence answers, minor procedure deviations.               |
+| `maintenance_planner`   | PM schedule changes, work-order release, routine spare-part picks.                    |
+| `maintenance_engineer`  | Lockout/tagout for routine maintenance, Class-A equipment work, troubleshooting.      |
+| `ehs_officer`           | **Mandatory** for every safety keyword: lockout, hot work, confined space, H2S, etc.  |
+| `quality_engineer`      | SOP deviations, NCR closure, COA changes.                                             |
+| `buyer`                 | Purchase requests ≤ $10k, no single-source.                                           |
+| `procurement_manager`   | Purchase requests > $10k, single-source vendors, lead time > 7 days.                  |
+| `plant_manager`         | Anything > $100k, fatality/injury reports, multi-week downtime, regulatory exposure.  |
+
+**Driver → required-roles routing** lives in `core/rbac.py` (`required_roles_for`).
+The semantics are **OR** (any user holding one of the listed roles can resolve
+the item); a stricter dual-approval policy can be layered on for regulated
+events — the use-case matrix in `core/rbac.USE_CASES` flags those today.
+
+**Auth flow**
+
+```
+POST /api/auth/signup     {user_id, password, role, display_name?}  → token
+POST /api/auth/login      {user_id, password}                       → token
+GET  /api/auth/me                                                   (Bearer)
+POST /api/auth/logout                                               (Bearer)
+GET  /api/auth/roles                                                → catalogue
+```
+
+The Next.js UI persists the token in `localStorage` and attaches
+`Authorization: Bearer …` to every request. The Streamlit Approvals tab
+shows an in-tab login form that uses the **same** SQLite user store, so
+credentials are interchangeable between the two UIs. The store is
+`data/processed/auth.sqlite` — separate file from the audit log so it can
+be rotated / re-seeded independently.
+
+**Demo accounts** (seeded automatically on first `./run.sh`; weak passwords
+intentional — change before any real deployment):
+
+| User                              | Password         | Role                  |
+| --------------------------------- | ---------------- | --------------------- |
+| `alice@plant.local`               | `operator123`    | `operator` (maker)    |
+| `bob.supervisor@plant.local`      | `supervisor123`  | `shift_supervisor`    |
+| `priya.planner@plant.local`       | `planner123`     | `maintenance_planner` |
+| `carol.eng@plant.local`           | `engineer123`    | `maintenance_engineer`|
+| `dave.ehs@plant.local`            | `ehs123`         | `ehs_officer`         |
+| `grace.qa@plant.local`            | `quality123`     | `quality_engineer`    |
+| `eve.buyer@plant.local`           | `buyer123`       | `buyer`               |
+| `frank.proc@plant.local`          | `procurement123` | `procurement_manager` |
+| `henry.pm@plant.local`            | `plant123`       | `plant_manager`       |
+
+**Use-case matrix** (`core/rbac.USE_CASES`) — each scenario also appears in
+the smoke test so a regression in the routing fails CI before it ships:
+
+| Scenario                          | Example query                                                                 | Required role(s)                                                  |
+| --------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Lockout/tagout                    | "Lockout/tagout procedure for pump P-203?"                                    | `maintenance_engineer` _or_ `ehs_officer`                         |
+| Hot-work permit                   | "Hot work permit for tank T-9 — emergency shutdown."                          | `shift_supervisor`, `maintenance_engineer`, `ehs_officer`, `plant_manager` |
+| Small spare-part PO (< $10k)      | "Raise a PO for 5 BRG-7203 bearings at $5000 from Vendor SKF urgent."         | `buyer`                                                           |
+| Mid-tier PO ($10k–$100k)          | "PO for replacement servo drive: $35,000 from Siemens, lead time 12 days."    | `procurement_manager`                                             |
+| Capital PO (> $100k)              | "Capex PO for $150,000 to replace CNC spindle from SKF single source."        | `procurement_manager`, `plant_manager`                            |
+| Injury / fatality report          | "Operator injury during permit-to-work on H2S vessel — recommend response."   | `ehs_officer`, `plant_manager`                                    |
+
+**Maker-lock** (segregation of duties)
+
+When a user is signed in and submits a `/api/chat` message, their `user_id`
+is stamped onto any pending approval that gets created. The resume endpoint
+returns **HTTP 409** if the same user later tries to approve it — even if
+they hold a role that's on the allow-list. The UI surfaces the lock with a
+"You submitted this — cannot self-approve" banner instead of the
+Approve/Reject buttons.
+
+**Quick verification (live curl)**
+
+```bash
+# 1. Operator submits a hot-work query — pauses with maker_user_id stamped
+OP=$(curl -s -X POST http://localhost:8000/api/auth/login \
+        -H 'Content-Type: application/json' \
+        -d '{"user_id":"alice@plant.local","password":"operator123"}' | jq -r .token)
+
+curl -s -X POST http://localhost:8000/api/chat -H "Authorization: Bearer $OP" \
+     -H 'Content-Type: application/json' \
+     -d '{"session_id":"demo-1","message":"Hot work permit for tank T-9 — emergency shutdown."}'
+
+# (if it asks a clarifying question, send "skip" the same way)
+
+curl -s -H "Authorization: Bearer $OP" http://localhost:8000/api/approvals/pending | jq '.pending[-1] | {maker_user_id, required_roles, can_current_user_approve}'
+
+# 2. Operator self-approve → 403 (wrong role) OR 409 (maker-lock when role matches)
+THREAD=$(curl -s -H "Authorization: Bearer $OP" http://localhost:8000/api/approvals/pending | jq -r '.pending[-1].thread_id')
+curl -s -o /dev/null -w "%{http_code}\n" -X POST "http://localhost:8000/api/approvals/$THREAD/resume" \
+     -H "Authorization: Bearer $OP" -H 'Content-Type: application/json' \
+     -d '{"approved":true,"comments":"self"}'
+# → 403
+
+# 3. EHS Officer resolves the same thread → 200, audit row carries approver_user_id + approver_role
+EHS=$(curl -s -X POST http://localhost:8000/api/auth/login -H 'Content-Type: application/json' \
+        -d '{"user_id":"dave.ehs@plant.local","password":"ehs123"}' | jq -r .token)
+curl -s -X POST "http://localhost:8000/api/approvals/$THREAD/resume" \
+     -H "Authorization: Bearer $EHS" -H 'Content-Type: application/json' \
+     -d '{"approved":true,"comments":"EHS sign-off"}' | jq
+```
+
 ### Limits & non-goals (intentional, this iteration)
 
-* No authn / authz on `/api/approvals/*` — wire OIDC / SAML in your deployment infra.
-* No multi-stage approval chains (single approver suffices for the demo).
-* No Slack / email notifications — easy to bolt onto the audit log; deliberately out of scope.
-* The Next.js UI shows the chat banner but the rich approval console is Streamlit-only for now.
+* **Demo-grade auth**: passwords hashed with stdlib PBKDF2-SHA256 + per-user
+  salt, tokens are 32 random bytes with a 24 h TTL. Swap in OIDC / SAML /
+  passlib + Argon2 for production.
+* No **multi-stage approval chains** (each pending item resolves on a single
+  signature; the `required_roles` list is OR, not AND).
+* No Slack / email notifications — easy to bolt onto the audit log;
+  deliberately out of scope.
+* Both UIs (Next.js + Streamlit) now have full approval consoles. The
+  Streamlit login is in-tab; Next.js shows a full login/signup screen.
 
 ---
 
@@ -1326,6 +1441,7 @@ cp .env.example .env
 | `HITL_AUTO_APPROVE_BELOW_USD` | `2000`                 | Purchase requests below this dollar amount auto-approve (Phase C).                                |
 | `HITL_HIGH_RISK_KEYWORDS` | safety / regulatory list   | Comma-separated, case-insensitive substrings; any hit auto-escalates.                              |
 | `HITL_DB_PATH`         | `data/processed/audit.sqlite` | SQLite file used for both the LangGraph checkpointer and the audit log.                            |
+| _(auth, no env var)_   | `data/processed/auth.sqlite`  | RBAC user + token store. Auto-seeded with the demo accounts on first launch; delete the file to re-seed. |
 | `HITL_CHECKPOINT_BACKEND` | `sqlite`                  | `sqlite` (durable, requires `langgraph-checkpoint-sqlite`) or `memory` (dev only).                 |
 | `NEXT_PUBLIC_API_ORIGIN` | `http://localhost:8000`     | Where the Next.js web UI sends `/api/*` requests     |
 | `API_PORT` / `STREAMLIT_PORT` / `WEB_PORT` | `8000` / `8501` / `3000` | Port overrides honoured by `run.sh` / `stop.sh` |

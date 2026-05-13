@@ -4,12 +4,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatMessage, TypingBubble } from "@/components/ChatMessage";
 import { ChatComposer } from "@/components/ChatComposer";
 import { Sidebar } from "@/components/Sidebar";
+import { AuthGate } from "@/components/AuthGate";
 import {
   api,
+  setAuthToken,
+  type ApprovalSnapshot,
+  type AuthUser,
   type ChatTurn,
   type HealthResponse,
   type StatsResponse,
 } from "@/lib/api";
+
+// Default Streamlit port from run.sh. Override at build time with
+// NEXT_PUBLIC_STREAMLIT_ORIGIN if your deployment uses a non-default host.
+const STREAMLIT_ORIGIN =
+  process.env.NEXT_PUBLIC_STREAMLIT_ORIGIN ?? "http://localhost:8501";
 
 const SESSION_KEY = "mfg-graphrag-session-id";
 
@@ -29,8 +38,48 @@ export default function ChatPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingThreadId, setPendingThreadId] = useState<string | null>(null);
+  const [pendingDetail, setPendingDetail] = useState<ApprovalSnapshot | null>(
+    null,
+  );
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+
+  // Resolve the signed-in user on first load. Stays null if no token is
+  // present or the token is invalid — `AuthGate` then handles login/signup.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .me()
+      .then((u) => {
+        if (!cancelled) setAuthUser(u);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      /* ignore */
+    }
+    setAuthToken(null);
+    setAuthUser(null);
+    setTurns([]);
+    setAwaitingPrompt(null);
+    setPendingThreadId(null);
+    setPendingDetail(null);
+  }, []);
 
   // Bootstrap session id from localStorage (or create one).
   useEffect(() => {
@@ -64,6 +113,9 @@ export default function ChatPage() {
             if (!cancelled) {
               setTurns(sess.state.turns);
               setAwaitingPrompt(sess.state.awaiting_prompt);
+              setPendingThreadId(
+                sess.state.pending_approval_thread_id ?? null,
+              );
             }
           } catch {
             /* fresh session */
@@ -104,6 +156,7 @@ export default function ChatPage() {
         const res = await api.chat(sessionId, trimmed);
         setTurns(res.state.turns);
         setAwaitingPrompt(res.state.awaiting_prompt);
+        setPendingThreadId(res.state.pending_approval_thread_id ?? null);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg);
@@ -129,20 +182,56 @@ export default function ChatPage() {
     }
     setTurns([]);
     setAwaitingPrompt(null);
+    setPendingThreadId(null);
+    setPendingDetail(null);
     setInput("");
   };
 
-  const placeholder = awaitingPrompt
-    ? `Answer: ${awaitingPrompt}  (or type 'skip')`
-    : "Ask anything about your manufacturing operations…";
+  // When a workflow pauses, fetch the approval payload (drivers, risk, etc.)
+  // so the banner can explain *why* it paused without a manual lookup.
+  useEffect(() => {
+    if (!pendingThreadId) {
+      setPendingDetail(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getApproval(pendingThreadId)
+      .then((snap) => {
+        if (!cancelled) setPendingDetail(snap);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingDetail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingThreadId]);
+
+  const placeholder = pendingThreadId
+    ? "Workflow paused for approval — resolve it in the Streamlit Approvals tab"
+    : awaitingPrompt
+      ? `Answer: ${awaitingPrompt}  (or type 'skip')`
+      : "Ask anything about your manufacturing operations…";
+
+  // Auth gate. While `me()` is in-flight we render nothing to avoid a flash
+  // of the chat UI for unauthenticated users.
+  if (!authChecked) {
+    return <div className="h-screen w-full bg-cream-50" />;
+  }
+  if (!authUser) {
+    return <AuthGate onSignIn={(u) => setAuthUser(u)} />;
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
       <Sidebar
         health={health}
         stats={stats}
+        user={authUser}
         onPickSuggestion={handlePickSuggestion}
         onNewChat={handleNewChat}
+        onSignOut={handleSignOut}
       />
 
       <main className="relative flex h-full flex-1 flex-col">
@@ -179,6 +268,24 @@ export default function ChatPage() {
                 </div>
               </div>
             ) : null}
+            {pendingThreadId ? (
+              <ApprovalBanner
+                threadId={pendingThreadId}
+                detail={pendingDetail}
+                currentUser={authUser}
+                onResolved={() => {
+                  setPendingThreadId(null);
+                  setPendingDetail(null);
+                  api
+                    .getSession(sessionId)
+                    .then((s) => {
+                      setTurns(s.state.turns);
+                      setAwaitingPrompt(s.state.awaiting_prompt);
+                    })
+                    .catch(() => {});
+                }}
+              />
+            ) : null}
             <div className="h-24" />
           </div>
         </div>
@@ -188,9 +295,186 @@ export default function ChatPage() {
           onChange={setInput}
           onSubmit={handleSubmit}
           placeholder={placeholder}
-          disabled={busy || !health?.ready}
+          disabled={busy || !health?.ready || Boolean(pendingThreadId)}
         />
       </main>
+    </div>
+  );
+}
+
+function ApprovalBanner({
+  threadId,
+  detail,
+  currentUser,
+  onResolved,
+}: {
+  threadId: string;
+  detail: ApprovalSnapshot | null;
+  currentUser: AuthUser | null;
+  onResolved: () => void;
+}) {
+  const drivers = detail?.risk?.drivers ?? [];
+  const score = detail?.risk?.score;
+  const requiredRoles = detail?.required_roles ?? [];
+  const makerUserId = detail?.maker_user_id ?? null;
+  const isMaker =
+    !!currentUser &&
+    !!makerUserId &&
+    currentUser.user_id.toLowerCase() === makerUserId.toLowerCase();
+  const roleAllowed =
+    !!currentUser && requiredRoles.includes(currentUser.role);
+  const canApprove =
+    detail?.can_current_user_approve ?? (roleAllowed && !isMaker);
+
+  const [comments, setComments] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const submit = async (approved: boolean) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await api.resumeApproval(threadId, {
+        approved,
+        comments: comments || undefined,
+      });
+      onResolved();
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const approvalsUrl = `${STREAMLIT_ORIGIN}/?tab=approvals`;
+
+  return (
+    <div className="mx-auto max-w-2xl px-3">
+      <div className="my-2 rounded-bubble border border-amber-300 bg-amber-50/80 px-4 py-3 text-[13.5px] text-amber-900 shadow-soft">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 text-lg" aria-hidden>
+            ⏸️
+          </span>
+          <div className="flex-1">
+            <div className="font-semibold">
+              Workflow paused for human approval
+            </div>
+            <div className="mt-0.5 text-[12.5px] text-amber-800/90">
+              Thread <code className="font-mono">{threadId}</code>
+              {typeof score === "number" ? (
+                <> · risk score {score.toFixed(2)}</>
+              ) : null}
+            </div>
+            {drivers.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {drivers.map((d) => (
+                  <span
+                    key={d}
+                    className="rounded-full border border-amber-300 bg-white/70 px-2 py-0.5 text-[11px] font-medium text-amber-900"
+                  >
+                    {d}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {requiredRoles.length > 0 ? (
+              <div className="mt-2 text-[12px] text-amber-800/90">
+                Required role(s):{" "}
+                {requiredRoles.map((r, i) => (
+                  <span key={r}>
+                    {i > 0 ? " · " : ""}
+                    <code className="rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-semibold">
+                      {r}
+                    </code>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {makerUserId ? (
+              <div className="mt-1 text-[11.5px] text-amber-800/80">
+                Submitted by <code>{makerUserId}</code>
+                {isMaker ? " (you — cannot self-approve)" : ""}
+              </div>
+            ) : null}
+
+            {/* ── Decision controls ─────────────────────────────────── */}
+            {canApprove ? (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-white/70 p-2.5">
+                <textarea
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  placeholder="Optional comments for the audit log…"
+                  rows={2}
+                  className="block w-full resize-none rounded border border-amber-200 bg-white px-2 py-1 text-[12.5px] text-ink-800 placeholder-ink-400 focus:border-amber-500 focus:outline-none"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => submit(true)}
+                    className="rounded-full bg-emerald-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:bg-ink-300"
+                  >
+                    {submitting ? "Submitting…" : "Approve"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => submit(false)}
+                    className="rounded-full bg-rose-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-rose-700 disabled:bg-ink-300"
+                  >
+                    Reject
+                  </button>
+                  <a
+                    href={approvalsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11.5px] text-amber-800 underline-offset-2 hover:underline"
+                  >
+                    Or use the Streamlit console →
+                  </a>
+                </div>
+                {submitError ? (
+                  <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[12px] text-rose-900">
+                    {submitError}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="mt-2.5 rounded-lg border border-amber-200 bg-white/60 px-3 py-2 text-[12.5px] text-amber-800/90">
+                {isMaker ? (
+                  <>
+                    You submitted this request — segregation of duties prevents
+                    you from approving it. Hand it to a colleague with one of
+                    the required roles above.
+                  </>
+                ) : currentUser ? (
+                  <>
+                    Your role{" "}
+                    <code className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold">
+                      {currentUser.role}
+                    </code>{" "}
+                    is not on this approval's allow-list. Ask a holder of one
+                    of the required roles above to resolve it.
+                  </>
+                ) : (
+                  <>Sign in to action this approval.</>
+                )}
+                <div className="mt-1.5">
+                  <a
+                    href={approvalsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] font-semibold text-amber-700 hover:underline"
+                  >
+                    Open Approvals tab →
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

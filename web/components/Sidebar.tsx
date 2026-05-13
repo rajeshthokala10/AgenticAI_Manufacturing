@@ -1,6 +1,6 @@
 "use client";
 
-import type { HealthResponse, StatsResponse } from "@/lib/api";
+import type { AuthUser, HealthResponse, StatsResponse } from "@/lib/api";
 
 const SUGGESTIONS = [
   "What is the OEE target for Plant A in Q1 2026?",
@@ -12,14 +12,72 @@ const SUGGESTIONS = [
   "PLC fault code FC-003 on conveyor CV-302",
 ];
 
+// One-click queries that exercise the HITL approval gate. Each is designed
+// to trip a specific deterministic risk driver in `core/criticality_classifier.py`
+// so reviewers can demo / smoke-test the Approvals queue without typing.
+const HITL_TRIGGERS: Array<{
+  label: string;
+  query: string;
+  badge: string;
+  tone: "safety" | "hot" | "purchase";
+}> = [
+  {
+    label: "Lockout/tagout (safety pause)",
+    query: "What is the lockout/tagout procedure for pump P-203?",
+    badge: "safety",
+    tone: "safety",
+  },
+  {
+    label: "Hot work permit (high risk)",
+    query: "Hot work permit for tank T-9 — emergency shutdown.",
+    badge: "hot work",
+    tone: "hot",
+  },
+  {
+    label: "$5,000 spare-part PO (over threshold)",
+    query:
+      "Please raise a PO for 5 BRG-7203 spare bearings at $5000 from Vendor SKF urgent.",
+    badge: "≥ $2k",
+    tone: "purchase",
+  },
+];
+
+const BADGE_TONE: Record<"safety" | "hot" | "purchase", string> = {
+  safety: "bg-rose-50 text-rose-700 border-rose-200",
+  hot: "bg-amber-50 text-amber-800 border-amber-200",
+  purchase: "bg-copper-500/10 text-copper-600 border-copper-500/30",
+};
+
 type Props = {
   health: HealthResponse | null;
   stats: StatsResponse | null;
+  user?: AuthUser | null;
   onPickSuggestion: (s: string) => void;
   onNewChat: () => void;
+  onSignOut?: () => void;
 };
 
-export function Sidebar({ health, stats, onPickSuggestion, onNewChat }: Props) {
+// Visual tone per role family so the badge is glanceable in the sidebar.
+const ROLE_TONE: Record<string, string> = {
+  operator: "bg-slate-100 text-slate-700 border-slate-300",
+  shift_supervisor: "bg-sky-50 text-sky-800 border-sky-200",
+  maintenance_planner: "bg-sky-50 text-sky-800 border-sky-200",
+  maintenance_engineer: "bg-indigo-50 text-indigo-800 border-indigo-200",
+  ehs_officer: "bg-rose-50 text-rose-800 border-rose-200",
+  quality_engineer: "bg-violet-50 text-violet-800 border-violet-200",
+  buyer: "bg-amber-50 text-amber-800 border-amber-200",
+  procurement_manager: "bg-copper-500/10 text-copper-600 border-copper-500/30",
+  plant_manager: "bg-emerald-50 text-emerald-800 border-emerald-200",
+};
+
+export function Sidebar({
+  health,
+  stats,
+  user,
+  onPickSuggestion,
+  onNewChat,
+  onSignOut,
+}: Props) {
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-ink-900/8 bg-cream-100/60 px-5 py-6 md:flex">
       <div className="mb-6 flex items-center gap-3">
@@ -33,6 +91,39 @@ export function Sidebar({ health, stats, onPickSuggestion, onNewChat }: Props) {
           <div className="text-xs text-ink-500">Hybrid GraphRAG · v1.0</div>
         </div>
       </div>
+
+      {user ? (
+        <div className="mb-4 rounded-xl border border-ink-900/8 bg-white/80 p-3 shadow-soft">
+          <div className="flex items-center justify-between">
+            <div className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-500">
+              Signed in
+            </div>
+            {onSignOut ? (
+              <button
+                onClick={onSignOut}
+                className="text-[10.5px] font-semibold text-copper-600 hover:underline"
+              >
+                Sign out
+              </button>
+            ) : null}
+          </div>
+          <div className="mt-1 truncate text-[13px] font-semibold text-ink-900">
+            {user.display_name || user.user_id}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-ink-500">
+            {user.user_id}
+          </div>
+          <div className="mt-2">
+            <span
+              className={`inline-block rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
+                ROLE_TONE[user.role] ?? "bg-cream-100 text-ink-700 border-ink-900/10"
+              }`}
+            >
+              {user.role}
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <button
         onClick={onNewChat}
@@ -58,6 +149,41 @@ export function Sidebar({ health, stats, onPickSuggestion, onNewChat }: Props) {
           ))}
         </div>
       </div>
+
+      {health?.use_hitl ? (
+        <div className="mb-6">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+              Test approvals (HITL)
+            </div>
+            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-200">
+              gate on
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {HITL_TRIGGERS.map((t) => (
+              <button
+                key={t.query}
+                onClick={() => onPickSuggestion(t.query)}
+                title={t.query}
+                className="group flex items-start gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-[12.5px] leading-snug text-ink-700 hover:border-ink-900/8 hover:bg-white"
+              >
+                <span
+                  className={`mt-0.5 shrink-0 rounded-full border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide ${BADGE_TONE[t.tone]}`}
+                >
+                  {t.badge}
+                </span>
+                <span className="flex-1">{t.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] leading-snug text-ink-400">
+            Each click pauses the workflow at the approval gate. Resolve it in
+            the Streamlit{" "}
+            <code className="text-ink-500">📋 Approvals</code> tab.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-auto space-y-3 text-[12.5px] text-ink-600">
         <div>
