@@ -23,6 +23,9 @@
 #   INSTALL_ONLY=1      install everything but do not start services
 #   SKIP_WEB=1          skip the Next.js UI
 #   SKIP_STREAMLIT=1    skip the Streamlit UI
+#   SKIP_HITL_SMOKE=1   skip the offline HITL smoke test (preflight)
+#   HITL_DEFAULT=on|off when creating a fresh .env, default the HITL gate
+#                       to enabled (on, default) or disabled (off)
 #   API_PORT / STREAMLIT_PORT / WEB_PORT    override listening ports
 #   NODE_BIN            path to node (default: auto-detect)
 # ---------------------------------------------------------------------------
@@ -185,16 +188,129 @@ HINT
 
 # ── 3. Bootstrap .env ──────────────────────────────────────────────────────
 
+# Flip a KEY=VALUE line in-place (creates the line if missing). Uses a sed
+# fallback portable to macOS (BSD) and Linux (GNU).
+env_set() {
+  local file="$1" key="$2" val="$3"
+  if grep -qE "^${key}=" "$file" 2>/dev/null; then
+    # In-place edit. The 's|…|…|g' pattern uses '|' to avoid path escaping.
+    if sed --version >/dev/null 2>&1; then
+      sed -i -E "s|^${key}=.*|${key}=${val}|" "$file"
+    else
+      sed -i '' -E "s|^${key}=.*|${key}=${val}|" "$file"
+    fi
+  else
+    printf "%s=%s\n" "$key" "$val" >>"$file"
+  fi
+}
+
 bootstrap_env_file() {
   hr "Environment file (.env)"
-  if [[ ! -f "$ROOT/.env" ]] && [[ -f "$ROOT/.env.example" ]]; then
-    cp "$ROOT/.env.example" "$ROOT/.env"
-    ok "created .env from .env.example"
+  local default_hitl="${HITL_DEFAULT:-on}"
+
+  if [[ ! -f "$ROOT/.env" ]]; then
+    if [[ -f "$ROOT/.env.example" ]]; then
+      cp "$ROOT/.env.example" "$ROOT/.env"
+      ok "created .env from .env.example"
+    else
+      : >"$ROOT/.env"
+      ok "created empty .env"
+    fi
+
+    # Fresh install: turn on the LangGraph + HITL stack so '📋 Approvals'
+    # is visible out of the box. Override with HITL_DEFAULT=off ./run.sh
+    # if you want a quiet first boot.
+    if [[ "$default_hitl" == "on" ]]; then
+      env_set "$ROOT/.env" USE_LANGGRAPH true
+      env_set "$ROOT/.env" USE_HITL true
+      env_set "$ROOT/.env" HITL_CHECKPOINT_BACKEND sqlite
+      ok "HITL approval gate enabled by default (USE_LANGGRAPH=true · USE_HITL=true)"
+    else
+      ok "HITL flags left at false (HITL_DEFAULT=off)"
+    fi
     warn "set OPENAI_API_KEY in .env to enable LLM modes (retrieval-only still works)"
-  elif [[ -f "$ROOT/.env" ]]; then
-    ok ".env present"
+    return 0
+  fi
+
+  ok ".env present"
+
+  # Existing .env: this is a first-time upgrade if the HITL keys are missing.
+  # Append the block AND turn the gate on by default (HITL_DEFAULT=on), so a
+  # user pulling the new run.sh into an existing checkout gets the same
+  # "just works" UX as a fresh clone. They can opt out with HITL_DEFAULT=off
+  # or by editing .env after the fact. If the keys are already there, we
+  # leave the user's values untouched.
+  local missing=0
+  local key
+  for key in USE_HITL HITL_RISK_THRESHOLD HITL_AUTO_APPROVE_BELOW_USD \
+              HITL_HIGH_RISK_KEYWORDS HITL_DB_PATH HITL_CHECKPOINT_BACKEND; do
+    if ! grep -qE "^${key}=" "$ROOT/.env" 2>/dev/null; then
+      missing=1
+      break
+    fi
+  done
+
+  if [[ "$missing" == "1" ]]; then
+    local hitl_default_val="false"
+    [[ "$default_hitl" == "on" ]] && hitl_default_val="true"
+    say "appending HITL defaults (USE_HITL=${hitl_default_val})"
+    {
+      printf "\n"
+      printf "# ── Human-in-the-Loop (HITL) approval gate ────────────────────────────────\n"
+      printf "# Auto-added by run.sh. Flip USE_HITL to false (and remove USE_LANGGRAPH=true)\n"
+      printf "# to disable the approval gate. See system_design/HITL_DESIGN.md for the PRD.\n"
+      printf "USE_LANGGRAPH=%s\n" "$hitl_default_val"
+      printf "USE_HITL=%s\n" "$hitl_default_val"
+      printf "HITL_RISK_THRESHOLD=0.6\n"
+      printf "HITL_AUTO_APPROVE_BELOW_USD=2000\n"
+      printf "HITL_HIGH_RISK_KEYWORDS=lockout,tagout,hot work,fire,explosion,h2s,arc flash,confined space,fatal,injury,death,toxic,asphyxiation,radiation,permit-to-work,shutdown,emergency\n"
+      printf "HITL_DB_PATH=data/processed/audit.sqlite\n"
+      printf "HITL_CHECKPOINT_BACKEND=sqlite\n"
+    } >>"$ROOT/.env"
+    if [[ "$hitl_default_val" == "true" ]]; then
+      ok "HITL approval gate ENABLED on first upgrade (USE_LANGGRAPH=true · USE_HITL=true)"
+    else
+      ok "HITL keys appended; USE_HITL=false (flip to true when ready)"
+    fi
+  fi
+
+  # If the user already has USE_HITL set but no USE_LANGGRAPH, nudge them.
+  if grep -qE '^USE_HITL=(1|true|yes|on)$' "$ROOT/.env" 2>/dev/null \
+      && ! grep -qE '^USE_LANGGRAPH=(1|true|yes|on)$' "$ROOT/.env" 2>/dev/null; then
+    warn "USE_HITL=true but USE_LANGGRAPH=false — the approval gate requires LangGraph."
+    say "fixing: setting USE_LANGGRAPH=true so HITL actually runs"
+    env_set "$ROOT/.env" USE_LANGGRAPH true
+  fi
+}
+
+# ── 3b. Pre-create directories the HITL stack writes to ────────────────────
+
+bootstrap_data_dirs() {
+  hr "Data directories"
+  mkdir -p "$ROOT/data/processed"
+  ok "data/processed/ ready (HITL_DB_PATH lives here)"
+}
+
+# ── 3c. Offline preflight: run the HITL smoke test ─────────────────────────
+
+run_hitl_smoke() {
+  hr "HITL preflight (offline smoke test)"
+  if [[ "${SKIP_HITL_SMOKE:-0}" == "1" ]]; then
+    say "skipped (SKIP_HITL_SMOKE=1)"
+    return 0
+  fi
+  if [[ ! -f "$ROOT/scripts/smoke_test_hitl.py" ]]; then
+    say "scripts/smoke_test_hitl.py not present — skipping preflight"
+    return 0
+  fi
+  local logfile="$LOG_DIR/hitl-smoke.log"
+  if (cd "$ROOT" && PYTHONPATH="$ROOT" "$PY" scripts/smoke_test_hitl.py \
+        >"$logfile" 2>&1); then
+    ok "HITL smoke test passed (5/5) — log: ${logfile#"$ROOT/"}"
   else
-    warn "no .env or .env.example — defaults from config.py will be used"
+    warn "HITL smoke test FAILED — log: ${logfile#"$ROOT/"}"
+    tail -n 15 "$logfile" || true
+    warn "continuing anyway (services will start; fix this before relying on HITL)"
   fi
 }
 
@@ -319,6 +435,8 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
   bootstrap_python
   install_python_deps
   bootstrap_env_file
+  bootstrap_data_dirs
+  run_hitl_smoke
   install_web_deps
 else
   hr "Install steps skipped (SKIP_INSTALL=1)"
@@ -332,6 +450,24 @@ if [[ "${INSTALL_ONLY:-0}" == "1" ]]; then
   ok "Install steps complete. INSTALL_ONLY=1 → not starting services."
   exit 0
 fi
+
+# Read the effective HITL state from .env (best-effort — used only for the
+# end-of-run summary). Pure-shell whitespace trim (avoids `xargs` which trips
+# on long values on macOS).
+effective_flag() {
+  local key="$1" default="$2"
+  if [[ -f "$ROOT/.env" ]]; then
+    local val
+    val="$(grep -E "^${key}=" "$ROOT/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+    # Trim leading/trailing whitespace without invoking xargs.
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    [[ -n "$val" ]] && { printf "%s" "$val"; return; }
+  fi
+  printf "%s" "$default"
+}
+HITL_FLAG="$(effective_flag USE_HITL false)"
+LG_FLAG="$(effective_flag USE_LANGGRAPH false)"
 
 echo ""
 
@@ -370,6 +506,19 @@ else
   hr "Next.js UI skipped"
 fi
 
+# HITL line for the final summary (depends on the effective flags).
+HITL_SUMMARY=""
+if [[ "$HITL_FLAG" =~ ^(1|true|yes|on)$ ]] && [[ "$LG_FLAG" =~ ^(1|true|yes|on)$ ]]; then
+  HITL_SUMMARY="
+   HITL gate    ENABLED  →  http://localhost:$STREAMLIT_PORT  (📋 Approvals tab)
+                            http://localhost:$API_PORT/api/approvals/pending
+                            http://localhost:$API_PORT/api/audit
+                            DB: data/processed/audit.sqlite"
+else
+  HITL_SUMMARY="
+   HITL gate    disabled  (set USE_HITL=true + USE_LANGGRAPH=true in .env to enable)"
+fi
+
 cat <<DONE
 
 ✅ Stack is up.
@@ -377,11 +526,13 @@ cat <<DONE
    API        http://localhost:$API_PORT/docs
    Streamlit  http://localhost:$STREAMLIT_PORT
    Web        http://localhost:$WEB_PORT
+${HITL_SUMMARY}
 
-   Logs:    .run/logs/{api,streamlit,web}.log
+   Logs:    .run/logs/{api,streamlit,web,hitl-smoke}.log
    PIDs:    .run/{api,streamlit,web}.pid
 
    Stop everything:  ./stop.sh
    Status check:     ./status.sh
    Tail a service:   tail -f .run/logs/api.log
+   Re-run smoke:     .venv/bin/python scripts/smoke_test_hitl.py
 DONE
