@@ -958,18 +958,64 @@ local list (`qwen2.5:*`, `llama3.2:*`, `phi3:*`, `mistral:*`) is sent to OpenAI.
   Without Ollama, set `CRITIC_MODEL=gpt-4o-mini` (or any OpenAI model) so the critic loop falls
   back to the cloud.
 
-### LLM cost / latency profile (Diagnostic mode, defaults)
+### Cost & latency profile
 
-| Phase             | Model         | Typical latency | Typical cost |
-| ----------------- | ------------- | --------------- | ------------ |
-| Answer (draft)    | `gpt-4o`      | ~1.5–3 s        | ~$0.005      |
-| Critic            | `qwen2.5:3b`  | ~50–250 ms      | $0 (local)   |
-| Retry _(if FAIL)_ | `gpt-4o`      | ~1.5–3 s        | ~$0.005      |
-| Embeddings        | MiniLM-L6     | ~10 ms / 1k chars | $0 (local) |
-| **Total**         | _per query_   | **~2–6 s**      | **~$0.005–0.010** |
+The numbers below assume **5 evidence chunks @ ~300 tokens** (`TOP_K_RERANK=5`) and the default
+tiered routing (answer = `gpt-4o`, critic = `qwen2.5:3b` on Ollama, all baselines on
+`gpt-4o-mini`). OpenAI per-1k pricing is sourced from `MODEL_PRICING` in `core/llm_client.py`;
+Ollama-served models are free.
 
-The exact numbers depend on prompt length, network conditions, and how often the critic forces a
-retry; see the **🔄 Architecture & Cost** tab in the Streamlit UI for live projections.
+> **Tip:** The same tables (with the LangGraph topology and a per-node reference) are baked
+> into [`system_design/system_architecture.pdf`](system_design/system_architecture.pdf) — a
+> 3-page design document you can hand to new engineers. Regenerate with
+> `python system_design/generate_diagram.py`.
+
+#### Per-mode summary (typical query)
+
+| Mode                              | LLM calls per query             | Tokens (in / out)                   | Cost / query | Latency p50  | Notes |
+| --------------------------------- | ------------------------------- | ----------------------------------- | -----------: | -----------: | ----- |
+| Quick Search                      | 0                               | 0 / 0                               | **$0.0000**  | 120–400 ms   | FAISS + embeddings only; works fully offline |
+| **Diagnostic (default)**          | 1 answer + 1 critic             | ~1500 / ~400  +  ~700 / ~150        | **~$0.0080** | 2.0–4.5 s    | Answer on `gpt-4o`, critic on `qwen2.5:3b` (free) |
+| Diagnostic + cause-ranker         | + 1 cause-ranker                | + ~1200 / ~250                      | **+ $0.0000**| + 100–500 ms | `USE_CAUSE_RANKING=true`; intent-gated |
+| Diagnostic worst-case             | 1 answer + 2 critics + 1 retry  | ~3700 / ~950                        | **~$0.0160** | 4.5–9 s      | Critic FAILs once, retry resolves |
+| Chat (multi-turn)                 | Same as Diagnostic              | Same as Diagnostic                  | Same         | Same         | Plus per-turn slot-filling (no LLM) |
+| Classical RAG (baseline)          | 1                               | ~1500 / ~400                        | **~$0.0005** | 1.0–2.0 s    | FAISS-only retrieval, `gpt-4o-mini` answer |
+| Direct LLM (baseline)             | 1                               | ~150 / ~400                         | **~$0.0003** | 0.8–1.5 s    | No retrieval; `gpt-4o-mini` parametric only |
+
+#### Per-stage detail (Diagnostic mode, `USE_CAUSE_RANKING=true`, 1 retry path)
+
+| Stage             | Model               | Provider          | Tokens (in / out) | Cost / call  | Latency p50  | Mandatory? |
+| ----------------- | ------------------- | ----------------- | ----------------- | -----------: | -----------: | ---------- |
+| `format`          | regex → `qwen2.5:3b`| Ollama (fallback) | 0–250 / 0–80      | **$0.0000**  | 5–60 ms      | yes |
+| `retrieve`        | —                   | FAISS + BM25 + KG | 0 / 0             | **$0.0000**  | 50–300 ms    | yes |
+| `rank_causes`     | `qwen2.5:3b`        | Ollama            | ~1200 / ~250      | **$0.0000**  | 100–500 ms   | `USE_CAUSE_RANKING` + troubleshooting intent |
+| `generate`        | `gpt-4o`            | OpenAI            | ~1500 / ~400      | **~$0.0050** | 1.5–3 s      | yes |
+| `critic` (1st)    | `qwen2.5:3b`        | Ollama            | ~700 / ~150       | **$0.0000**  | 50–250 ms    | yes |
+| `retry` (if FAIL) | `gpt-4o`            | OpenAI            | ~1700 / ~400      | **~$0.0050** | 1.5–3 s      | FAIL & `attempts<MAX_CRITIC_RETRIES` |
+| `critic` (2nd)    | `qwen2.5:3b`        | Ollama            | ~700 / ~150       | **$0.0000**  | 50–250 ms    | after retry |
+
+#### Cloud-vs-local pricing (per 1k tokens, from `core/llm_client.py`)
+
+| Model role                       | Default            | OpenAI in / out      | Local equivalent       | Switch via `.env`                                                  | Net effect |
+| -------------------------------- | ------------------ | -------------------- | ---------------------- | ------------------------------------------------------------------ | ---------- |
+| Answer / Retry                   | `gpt-4o`           | $0.0025 / $0.010     | `qwen2.5:7b` on Ollama | `ANSWER_MODEL=qwen2.5:7b`                                          | 100% free, slower latency |
+| Critic                           | `qwen2.5:3b`       | n/a (local)          | —                      | `CRITIC_MODEL=gpt-4o-mini`                                         | $0 → ~$0.0001 / call |
+| Cause-ranker (opt-in)            | `qwen2.5:3b`       | n/a (local)          | —                      | `CAUSE_RANK_MODEL=gpt-4o-mini`                                     | $0 → ~$0.0002 / call |
+| Comparison (Direct / Classical)  | `gpt-4o-mini`      | $0.00015 / $0.0006   | `qwen2.5:3b` on Ollama | `DIRECT_LLM_MODEL=…` / `CLASSICAL_RAG_MODEL=…`                     | Free at slight quality cost |
+| Embeddings                       | `MiniLM-L6-v2`     | n/a (local)          | —                      | `EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`                           | Rebuild FAISS after change |
+
+#### Headline economics
+
+- **Critic loop is free**: every diagnostic answer is graded by a local Qwen-3B model before
+  it leaves the server. Cloud tokens are spent only on draft + (occasional) retry.
+- **Cause-ranking is free**: the optional cause-ranker also runs on Ollama by default, adds
+  100–500 ms of latency, and is intent-gated so non-troubleshooting queries skip it entirely.
+- **A typical Diagnostic query costs ~$0.008**; a worst-case (1 retry) is ~$0.016. The Streamlit
+  **🔄 Architecture & Cost** tab projects daily / monthly spend live from these numbers.
+
+The exact figures depend on prompt length, model temperature, network conditions, and how often
+the critic forces a retry. Streamlit displays the actual per-query metrics returned by the
+orchestrator (`response["metrics"]`) for every chat turn.
 
 ---
 
