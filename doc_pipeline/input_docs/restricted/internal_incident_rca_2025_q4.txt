@@ -1,0 +1,92 @@
+RESTRICTED — INTERNAL ROOT-CAUSE ANALYSIS (RCA), Q4 2025
+Visible to: Maintenance Engineer, Quality Engineer, EHS Officer, Shift
+Supervisor, Maintenance Planner, Buyer, Procurement Manager, Plant Manager.
+NOT for general operator distribution. RCA findings are pre-decisional.
+
+================================================================================
+INTERNAL RCA — BEARING FAILURE CASCADE ON LINE 3 (Oct–Dec 2025)
+Owner: Maintenance Reliability Manager, reviewed by Quality + EHS
+Status: CLOSED — corrective actions verified Feb 2026
+================================================================================
+
+1. INCIDENT SUMMARY
+
+   Between Oct 14 and Dec 02, 2025, Line 3 experienced four unplanned
+   spindle-bearing failures on CNC-09, CNC-12, and CNC-15. Cumulative
+   downtime: 47 hours. Estimated revenue impact: $312k. No injuries.
+   Two of the failures produced scrap that escaped to QA (subsequently
+   contained by the daily SPC sampling).
+
+2. TIMELINE
+
+   Oct 14 — CNC-09 spindle seizure during finishing pass; teardown found
+            scored race on the front P4 bearing (BRG-7305-P4 lot J49).
+   Oct 28 — CNC-12 high-vibration alarm during qualification cut; same
+            bearing SKU + lot, similar wear pattern.
+   Nov 18 — CNC-15 vibration alert; preventive teardown confirmed
+            initiating wear before catastrophic failure.
+   Dec 02 — CNC-09 secondary failure 7 weeks after rebuild; root cause
+            traced to a sub-optimal preload during the rebuild kit
+            installation.
+
+3. ROOT CAUSE (5-WHY)
+
+   Why-1: Spindle bearing race scoring under nominal load.
+   Why-2: Loss of EHL film due to contaminated lubricant in the
+          spindle reservoir.
+   Why-3: Coolant ingress past the labyrinth seal.
+   Why-4: Labyrinth seal o-ring set to obsolete spec (out-of-revision
+          drawing dated 2018; current spec from SKF dated 2023).
+   Why-5: Maintenance Engineering drawing pack not refreshed since the
+          last SKF spec update; obsolete BOM line was not flagged
+          during the spare-parts review.
+
+   Contributing cause (Dec 02 recurrence): preload procedure on the
+   rebuild kit was not updated for the 2024 SKF preload table; the
+   installing technician used the original install-manual values.
+
+4. CORRECTIVE ACTIONS (CAPA)
+
+   CAPA-2025-Q4-031
+     - Replace o-ring spec across all CNC labyrinth seals (CNC-09, 12, 15).
+     - Refresh maintenance drawing pack from current SKF release.
+     - Verified: Feb 12, 2026.
+
+   CAPA-2025-Q4-032
+     - Update spindle-rebuild preload procedure to 2024 SKF table.
+     - Re-train the four certified spindle rebuilders.
+     - Add preload measurement to the rebuild sign-off checklist.
+     - Verified: Feb 24, 2026.
+
+   CAPA-2025-Q4-033
+     - Introduce a monthly review of OEM technical bulletins to detect
+       silent spec changes earlier.
+     - First review: Jan 2026 (caught a Siemens drive-firmware note).
+     - Verified: ongoing.
+
+5. INTERNAL OBSERVATIONS (NOT FOR EXTERNAL DISCLOSURE)
+
+   - Lot J49 from SKF was within spec on incoming inspection; the
+     failure mechanism was *secondary* (coolant ingress) not primary
+     (defective bearing). Procurement has documented this for the
+     next SKF QBR but the matter is closed; no warranty claim filed.
+   - Two technicians completed the spindle rebuild course in 2022 and
+     are *not* on the updated preload procedure. HR has been notified
+     to schedule refresher training; do not raise this as a corrective
+     action externally — it is being handled inside the maintenance
+     organization.
+   - Quality Engineering recommends a follow-up SPC review at the end
+     of Q1 2026 to confirm no field escapes from the affected window.
+     That review is scheduled and tracked in the QMS.
+
+6. AUDIENCE-APPROPRIATE COMMUNICATION
+
+   Operators have been briefed at shift handover on: the new preload
+   sign-off checklist, the updated rebuild kit BOM, and the resumption
+   of normal CNC-09/12/15 cycles. They have NOT been given the RCA
+   document itself; operators see the procedure changes, not the
+   internal findings.
+
+================================================================================
+END OF RCA — Restricted distribution.
+================================================================================

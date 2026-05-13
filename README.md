@@ -131,11 +131,14 @@ See `requirements.txt` (Python) and `web/package.json` (Node) for exact versions
 ---
 
 > **Architect-grade diagram set:** `system_design/system_architecture.pdf` is the canonical
-> reference. Six landscape pages, regenerable from `system_design/generate_diagram.py`:
+> reference. Seven landscape pages, regenerable from `system_design/generate_diagram.py`:
 > top-level architecture · LangGraph diagnostic flow · cost & latency breakdown · HITL gate ·
 > **low-level component sequence** (every step of a $5,000 PO from operator keystroke to audit
 > row) · **component interaction contracts** (every cross-process edge with payload, auth and
-> failure modes). Rebuild any time with `.venv/bin/python system_design/generate_diagram.py`.
+> failure modes) · **role-based knowledge-base ACLs** (three-tier classification, role × tier
+> read-set matrix, ingest-time tagging, ContextVar-scoped retriever filter, and the operator
+> vs plant-manager evidence delta). Rebuild any time with
+> `.venv/bin/python system_design/generate_diagram.py`.
 
 ## High-Level Architecture
 
@@ -981,7 +984,7 @@ Ollama-served models are free.
 
 > **Tip:** The same tables (with the LangGraph topology and a per-node reference) are baked
 > into [`system_design/system_architecture.pdf`](system_design/system_architecture.pdf) — a
-> 3-page design document you can hand to new engineers. Regenerate with
+> 7-page design document you can hand to new engineers. Regenerate with
 > `python system_design/generate_diagram.py`.
 
 #### Per-mode summary (typical query)
@@ -1110,6 +1113,8 @@ POST /api/approvals/{thread_id}/resume   → {approved, approver, comments, edit
 GET  /api/approvals/my                   → {user, stats, pending, pending_for_me,
                                             decisions, actioned}   (Bearer required)
 GET  /api/audit?limit=50&offset=0        → recent decisions + approval-rate stats
+GET  /api/access/policy                  → {role, max_tier, allowed_classifications,
+                                            classifications_catalogue}   (Bearer optional)
 ```
 
 `/api/health` now returns `use_hitl` and `use_langgraph` so any UI can hide the Approvals tab
@@ -1344,6 +1349,96 @@ curl -s -X POST "http://localhost:8000/api/approvals/$THREAD/resume" \
 
 ---
 
+## Role-Based Knowledge-Base Access (Document ACLs)
+
+The same role catalogue that gates *approvals* also gates *reads* on the
+knowledge base. Every ingested chunk carries a classification tag in its
+metadata, and the retrievers refuse to surface a chunk whose tier is above
+the signed-in user's read-set — so an operator asking *"what's our Q1
+EBITDA?"* gets an honest "I have no evidence on that" instead of leaking
+confidential financial data.
+
+### Three-tier classification
+
+| Tier            | Who reads it                                  | Example documents                                                                              |
+| --------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `public`        | Every role, including `operator`              | SOPs, alarm response procedures, equipment manuals, safety bulletins, public production data   |
+| `restricted`    | Every *checker* role (anyone but `operator`)  | Incident RCAs, regulatory response playbooks, internal work-order analyses                     |
+| `confidential`  | `plant_manager` + `procurement_manager` only  | Quarterly financial reviews, M&A target diligence, strategic supplier pricing, succession plan |
+
+Read-set membership lives in
+[`core/document_acl.py`](core/document_acl.py) → `ROLE_TO_CLASSIFICATIONS`.
+The same module ships:
+
+* `classify_from_path(path)` — folder-based ingest-time tagging
+  (`management/` or `confidential/` → `confidential`; `restricted/` or
+  `internal/` → `restricted`; everything else → `public`). No front-matter
+  edits to the source documents required.
+* `with_user_classifications(role)` — a context manager the API layer wraps
+  around every authenticated `/api/chat` so the role propagates to deep
+  retriever calls through a `ContextVar` (no parameter plumbing).
+* `filter_chunks(items)` — the predicate every retriever runs as its last
+  step. `HybridRetriever.retrieve()` applies it post-RRF;
+  `EmbeddingPipeline.search()` over-fetches and filters inline.
+* `policy_snapshot(role)` — the payload returned by `/api/access/policy`
+  so the UI can render the "Knowledge access tier" badge.
+
+### Sample sensitive documents
+
+Ships out-of-the-box for demos / smoke tests:
+
+```
+doc_pipeline/input_docs/
+├── management/                         # → confidential
+│   ├── q1_2026_financial_review.txt      EBITDA, capex envelope, supplier exposure
+│   ├── acquisition_target_assessment.txt M&A working paper (Project Meridian)
+│   ├── strategic_supplier_pricing.txt    SKF / Siemens / Sandvik rebate tiers
+│   └── leadership_succession_2026.txt    Critical-role readiness + retention bands
+└── restricted/                         # → restricted
+    ├── regulatory_incident_response_plan.txt  72-hour OSHA / EPA playbook
+    └── internal_incident_rca_2025_q4.txt      Q4 spindle-bearing RCA (CAPAs + notes)
+```
+
+To add your own: drop a `.pdf`, `.txt`, or `.xlsx` into the appropriate
+folder and run `python main.py --rebuild`. The ingester recurses, the
+chunker stamps the classification, and the FAISS index picks up the new
+chunks on the next API restart.
+
+### REST + UI surface
+
+```
+GET /api/access/policy                 → {role, max_tier,
+                                          allowed_classifications,
+                                          classifications_catalogue}
+```
+
+The Next.js sidebar renders a small **`KB · Public / Restricted / Confidential`**
+pill underneath the role badge so users always know which tier of the
+corpus is in scope for their session. Anonymous callers get the
+public-only badge by default.
+
+### Smoke test (offline, no FastAPI needed)
+
+```
+PYTHONPATH=. python scripts/smoke_test_acl.py
+```
+
+Five test groups: path classification, role → tier map, `ContextVar`
+scoping, dict-based filtering, **and** an end-to-end FAISS call that
+proves an operator receives zero confidential chunks on a financial query
+while a plant manager receives several. Catches regressions in any layer.
+
+### Why this matters
+
+Without document-level ACLs the only thing standing between a line
+operator and the board-ready financial review is the *prompt* — and the
+prompt is exactly what the operator gets to control. The classification
+metadata is enforced **before** chunks reach the LLM, so the
+confidentiality boundary is a deterministic data-pipeline guarantee, not
+a prompt-engineering pinky-swear.
+
+---
+
 ## Directory Structure
 
 ```
@@ -1403,6 +1498,9 @@ hybrid-graphrag-manufacturing/
 │   ├── rag_engine.py               # Standalone RAGEngine façade (uses doc_pipeline only)
 │   ├── create_sample_docs.py       # generators for the 7 demo files
 │   ├── input_docs/                 # ★ committed sample PDFs / TXT / Excel
+│   │   ├── (top level)             #   → tier=public  (everyone reads)
+│   │   ├── restricted/             #   → tier=restricted (checker roles only)
+│   │   └── management/             #   → tier=confidential (plant+procurement mgr)
 │   ├── vector_store/               # ★ committed prebuilt FAISS index
 │   └── output/                     # runtime outputs (gitignored)
 │
@@ -1417,6 +1515,7 @@ hybrid-graphrag-manufacturing/
 │   ├── criticality_classifier.py   # ★ Risk score + drivers (HITL gate)
 │   ├── purchase_request.py         # PurchaseRequest parser + KG enrichment
 │   ├── rbac.py                     # ★ Role catalogue + required_roles_for routing
+│   ├── document_acl.py             # ★ Classification tiers + role → tier map + ContextVar
 │   ├── auth_store.py               # ★ SQLite user/token store (auth.sqlite)
 │   ├── audit_log.py                # ★ Append-only audit + dashboard aggregations
 │   └── retrieval/

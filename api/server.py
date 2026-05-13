@@ -49,6 +49,10 @@ from config import (  # noqa: E402
 )
 from core.audit_log import get_default_log  # noqa: E402
 from core.auth_store import UserRecord  # noqa: E402
+from core.document_acl import (  # noqa: E402
+    policy_snapshot,
+    with_user_classifications,
+)
 from core.rbac import can_approve, is_maker_locked, required_roles_for  # noqa: E402
 from pipeline import ChatAgent, ChatState, ManufacturingPipeline  # noqa: E402
 
@@ -168,8 +172,14 @@ def chat(
     lock = _get_session_lock(req.session_id)
     with lock:
         state = _Singleton.sessions.setdefault(req.session_id, ChatState())
+        # Stamp the request's document-ACL view so every retriever called
+        # under ``agent.handle`` filters chunks against the signed-in user's
+        # role. Anonymous chats fall through to ``public``-only via the
+        # default ContextVar value.
+        user_role = user.role if user is not None else None
         try:
-            _Singleton.agent.handle(state, req.message)
+            with with_user_classifications(user_role):
+                _Singleton.agent.handle(state, req.message)
         except Exception as exc:
             logger.exception("Agent failure on session %s", req.session_id)
             raise HTTPException(500, detail=f"Agent error: {exc!r}") from exc
@@ -341,6 +351,24 @@ def my_approvals(
         "decisions": decisions,
         "actioned": actioned,
     }
+
+
+@app.get("/api/access/policy")
+def get_access_policy(
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> Dict[str, Any]:
+    """Document-ACL view for the signed-in user.
+
+    The Next.js UI calls this on login to render the *access-tier badge*
+    next to the chat composer. Anonymous callers get the safe default
+    (``public`` only) so the UI can still display the badge for guests.
+    """
+    role = user.role if user is not None else None
+    snap = policy_snapshot(role)
+    if user is not None:
+        snap["user_id"] = user.user_id
+        snap["display_name"] = user.display_name
+    return snap
 
 
 @app.get("/api/approvals/pending")

@@ -1,0 +1,78 @@
+CONFIDENTIAL — LEADERSHIP SUCCESSION & COMPENSATION PLAN
+Plant Manager only. (Procurement Manager may view supply-chain section.)
+
+================================================================================
+LEADERSHIP SUCCESSION PLAN — 2026 REVIEW CYCLE
+Houston Plant
+Reviewed and approved: Plant Manager, March 2026
+================================================================================
+
+The succession plan is the most sensitive document the plant produces. It
+identifies critical-role gaps, ranks internal candidates, and records the
+compensation actions tied to retention. Disclosure outside the named
+readership creates labour-relations risk, retention risk, and (in some
+jurisdictions) compliance risk.
+
+1. CRITICAL ROLES & READINESS
+
+   Role                          Incumbent          Readiness  Risk
+   ----                          ---------          ---------  ----
+   Plant Manager                 (current)          n/a        n/a
+   Production Manager            Jordan H.          Ready-now  Low
+   Maintenance Reliability Mgr   Priya R.           1-2 yrs    Medium
+   Quality Director              Marcus L.          Ready-now  Low
+   Procurement Manager           Open               n/a        HIGH
+   EHS Director                  Sarah N.           Ready-now  Low
+
+   Procurement Manager is the highest-risk open role; interim coverage is
+   handled by the Sr Buyer with weekly check-ins from corporate. External
+   search is in flight, target close: end of Q2.
+
+2. HIGH-POTENTIAL EMPLOYEE WATCH-LIST
+
+   The following individuals are tracked for accelerated development.
+   Identification is strictly internal — public disclosure would harm
+   peers' morale and create flight risk for the named employees.
+
+   - Reliability Engineer (Lead)  → development path: Maint Rel Mgr in 18 mo
+   - Sr Buyer                     → development path: Procurement Mgr in 12 mo
+   - Quality Engineer (P&L lead)  → development path: Quality Director in 24 mo
+   - Shift Supervisor (Line 2)    → development path: Production Mgr in 36 mo
+
+3. RETENTION COMPENSATION ACTIONS (CONFIDENTIAL)
+
+   Compensation envelope approved by corporate, individual amounts logged
+   in the HRIS retention module:
+
+     - Retention bonus pool ............... $480,000 (12 individuals)
+     - Restricted-stock pool .............. 4,200 units (8 individuals)
+     - Equity-cliff dates ................. staggered Mar / Sep 2027
+
+   Detail by individual is intentionally NOT included in this file. The
+   per-person amounts live in HRIS under role: hr_business_partner.
+
+4. EXIT-RISK INDICATORS (Q1 2026)
+
+   Three flight-risk signals tracked for the senior leadership team:
+     - External recruiter contact frequency (HR pulse-check)
+     - 360-feedback "engagement" trend (down >0.4 in any quarter = flag)
+     - Sponsored-conference attendance (proxy for outside networking)
+
+   Q1 2026 flags raised on: 1 individual (engagement trend). Action plan
+   in place; manager check-in cadence increased to weekly.
+
+5. SUPPLY-CHAIN LEADERSHIP READINESS (for Procurement Manager)
+
+   The Procurement Manager search prioritises:
+     - 8+ years in industrial procurement, ideally bearing or precision
+       metal-cutting categories.
+     - Demonstrated experience reducing single-source exposure from
+       30%+ down to under 25%.
+     - Capability to inherit the SKF / Siemens / Sandvik master agreements
+       (see "Strategic Supplier Pricing" working paper).
+     - Willingness to relocate to Houston by Q3 close.
+
+================================================================================
+This document is strictly confidential. Operators, supervisors, engineers,
+buyers, EHS officers, and quality engineers MUST NOT have access.
+================================================================================

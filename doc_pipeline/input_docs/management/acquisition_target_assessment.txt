@@ -1,0 +1,80 @@
+CONFIDENTIAL — M&A DUE DILIGENCE WORKING PAPER
+Plant Manager + Procurement Manager only. Pre-decisional. Privileged.
+
+================================================================================
+ACQUISITION TARGET ASSESSMENT — PROJECT MERIDIAN
+Target: PrecisionCore Bearings LLC (private, Ohio)
+Prepared by: Corporate Development, in collaboration with Plant Manager
+Date: April 2026
+================================================================================
+
+1. STRATEGIC RATIONALE
+
+   PrecisionCore (PC) is a regional precision-bearing manufacturer with
+   ~$28M revenue and specialty capabilities in P4-class spindle bearings
+   that we currently source single-source from SKF. A successful close
+   would:
+
+     a) Eliminate the single-source exposure on CNC spindle parts that
+        accounts for $1.1M of annual tariff risk.
+     b) Bring spindle bearing manufacturing in-house, reducing landed
+        cost by an estimated 22-28% on the affected SKUs.
+     c) Add 18,000 sq ft of grinding and lapping capacity in Ohio that
+        could absorb future precision-machining demand from our Line 5
+        expansion (FY27).
+
+2. FINANCIAL PROFILE OF TARGET
+
+   FY25 Revenue ...................... $27.8M
+   FY25 EBITDA ....................... $4.1M  (14.8% margin)
+   FY25 Free Cash Flow ............... $2.6M
+   Net Debt .......................... $0.4M
+   Working capital % of revenue ...... 18%
+
+   Pre-LOI valuation range:
+     - 6.5x EBITDA (low / strategic floor) .......... $26.7M
+     - 8.0x EBITDA (mid / negotiated base case) ..... $32.8M
+     - 9.5x EBITDA (high / competing-bid scenario) .. $39.0M
+
+   Recommended walk-away: $36M enterprise value (8.8x EBITDA).
+
+3. SYNERGY MODEL
+
+   Annual run-rate synergies, FY28 steady state:
+     COGS reduction (in-house spindle bearings) ..... $1.6M
+     Tariff elimination ............................. $0.8M
+     SG&A consolidation ............................. $0.5M
+     Capacity arbitrage (Line 5 ramp) ............... $0.7M
+     ------------------------------------------------ ------
+     Gross synergies ................................ $3.6M
+     Dis-synergies (retention, integration costs) ... ($0.9M)
+     Net steady-state synergies ..................... $2.7M
+
+   Payback period at $32M EV: 4.1 years.
+
+4. KEY DILIGENCE FINDINGS
+
+   - Customer concentration is acceptable: top 5 customers are 41% of
+     revenue, no single customer >12%.
+   - Two key engineers (lead grinding metallurgist, P4-class process
+     engineer) are critical-person risks; retention packages required
+     pre-signing.
+   - Environmental: one historical solvent release on the south pad
+     (closed by EPA in 2018) — Phase II ESA recommends no further
+     remediation. Reserve $0.2M for residual indemnity.
+   - IT: legacy MES needs replatforming (~$0.6M, 6 months) post-close.
+
+5. RECOMMENDED NEXT STEPS
+
+   a) Sign exclusivity LOI at $32M EV, 90-day diligence window.
+   b) Engage outside counsel for SPA drafting (week of May 12).
+   c) Pre-close briefing for Plant Manager + Procurement Manager only;
+      operations team will be looped in after definitive agreement.
+   d) Do NOT disclose target identity to shop-floor, planning, EHS, or
+      buyer teams until public announcement. Standard M&A confidentiality
+      protocol applies.
+
+================================================================================
+This document is privileged pre-decisional material. Operators, shift
+supervisors, planners, engineers, and buyers must not be granted access.
+================================================================================

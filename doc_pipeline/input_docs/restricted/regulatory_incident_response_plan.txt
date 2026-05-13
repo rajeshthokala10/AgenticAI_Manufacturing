@@ -1,0 +1,94 @@
+RESTRICTED — REGULATORY INCIDENT RESPONSE PLAYBOOK
+Visible to: EHS Officer, Maintenance Engineer, Quality Engineer, Shift
+Supervisor, Maintenance Planner, Buyer, Procurement Manager, Plant Manager.
+NOT for general operator distribution. Litigation-sensitive content.
+
+================================================================================
+REGULATORY INCIDENT RESPONSE PLAYBOOK
+Owner: EHS Director, reviewed by Plant Counsel
+Revision: 2026-02
+================================================================================
+
+Purpose: govern the first 72 hours after a *reportable* regulatory event
+(OSHA recordable injury, EPA-reportable release, hazardous-material
+exposure above PEL, or any event triggering external notification). The
+playbook codifies who decides what, how external communication is
+controlled, and where the contemporaneous incident record is kept.
+
+1. INCIDENT CLASSIFICATION (TRIGGERS THIS PLAYBOOK)
+
+   Tier-1 (any of):
+     - OSHA-recordable injury or fatality
+     - Permit-required confined-space rescue
+     - Hazardous chemical release above reportable quantity (RQ)
+     - Process-safety incident with property damage > $25k
+     - Any event reportable to EPA, OSHA, or state regulator within 24h
+
+   Tier-2 (any of):
+     - First-aid injury with restricted duty
+     - Near-miss involving moving equipment + line-of-fire exposure
+     - Permit-to-work non-compliance discovered during audit
+
+2. FIRST 60 MINUTES — ON-SCENE PROTOCOL
+
+   1. Shift Supervisor declares the incident and isolates the area.
+   2. EHS Officer is paged. If unreachable, on-call Maintenance Engineer
+      assumes acting-EHS authority until relieved.
+   3. Plant Manager is notified within 15 minutes (Tier-1) or end of
+      shift (Tier-2).
+   4. No statements to media, regulators, or families until Plant
+      Counsel is briefed. Operators answering inbound calls follow the
+      "no comment, the plant will respond shortly" script.
+   5. Evidence preservation: do NOT clean the scene or move equipment
+      until EHS clears photo, sketch, and witness-statement capture.
+
+3. REGULATORY NOTIFICATION TIMELINE
+
+   Trigger                                Authority         Deadline
+   -------                                ---------         --------
+   Fatality / hospitalization of 3+       OSHA              8 hours
+   Inpatient hospitalization (single)     OSHA              24 hours
+   Amputation, loss of eye                OSHA              24 hours
+   CERCLA RQ release                      EPA (NRC)         15 minutes
+   State permit excursion                 State environ.    24 hours
+   DOT release in transport               DOT (CHEMTREC)    immediate
+
+4. EVIDENCE & DOCUMENTATION
+
+   Maintain a *single* contemporaneous incident binder with:
+     - Witness statements, signed and dated within 24 hours.
+     - Photographic log with chain-of-custody.
+     - Equipment lockout records before/after the event.
+     - Permit-to-work record (if applicable).
+     - All written communication between EHS, Plant Manager, and counsel.
+
+   All draft root-cause analyses are marked DRAFT — PRIVILEGED until
+   counsel releases them. Do not share preliminary RCA findings with
+   workers, peers, or supervisors outside this readership.
+
+5. COMMUNICATION ROLES (TIER-1)
+
+   Internal cascade:
+     Shift Supervisor → EHS Officer → Plant Manager → Corporate.
+
+   External cascade:
+     Plant Counsel → Regulator → (if required) Press release via Corp Comms.
+
+   Worker communication: a single end-of-shift town-hall script is
+   distributed to supervisors. No individual "what happened" emails.
+
+6. POST-INCIDENT RIGHT-TO-KNOW
+
+   Operators and the broader workforce ARE entitled to know:
+     - The general nature of the incident (e.g. "a confined-space event
+       occurred in the Line 3 area at 14:20").
+     - Any *immediate* changes to procedures that affect their tasks.
+     - The status of the area (safe to enter, restricted, etc.).
+   Operators are NOT entitled (via this knowledge base) to:
+     - The contents of this playbook itself.
+     - The regulator-communication strategy.
+     - Names of witnesses or counsel.
+
+================================================================================
+END OF PLAYBOOK — Distribute only via formal release by Plant Counsel.
+================================================================================

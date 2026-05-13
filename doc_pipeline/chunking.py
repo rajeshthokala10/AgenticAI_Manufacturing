@@ -303,9 +303,13 @@ class HybridChunker:
         else:
             chunks = self.recursive.chunk(doc)
 
+        from core.document_acl import classify_from_path
+
+        classification = doc.metadata.get("classification") or classify_from_path(doc.source)
         for chunk in chunks:
             chunk.metadata["source"] = doc.source
             chunk.metadata["doc_type"] = doc.doc_type
+            chunk.metadata["classification"] = classification
 
         return chunks
 

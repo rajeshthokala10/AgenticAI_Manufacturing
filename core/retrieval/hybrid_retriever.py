@@ -4,6 +4,7 @@ from config import RRF_K, TOP_K_RETRIEVAL, TOP_K_RERANK
 from core.retrieval.bm25_retriever import BM25Retriever
 from core.retrieval.graph_retriever import GraphRetriever
 from core.knowledge_graph import KnowledgeGraph
+from core.document_acl import filter_chunks
 
 try:
     from core.retrieval.vector_retriever import VectorRetriever
@@ -64,7 +65,9 @@ class HybridRetriever:
                 result["text"] = doc["text"]
                 result["metadata"] = doc.get("metadata", {})
 
-        return fused
+        # Apply per-request document ACL last so any chunk the active user
+        # is not entitled to read never reaches the LLM prompt or the UI.
+        return filter_chunks(fused)
 
     def retrieve_vector_only(self, query: str, top_k: int = TOP_K_RERANK) -> List[Dict]:
         return self.vector.retrieve(query, top_k=top_k)

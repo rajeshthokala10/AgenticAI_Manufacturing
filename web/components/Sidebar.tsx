@@ -1,6 +1,11 @@
 "use client";
 
-import type { AuthUser, HealthResponse, StatsResponse } from "@/lib/api";
+import type {
+  AccessPolicyResponse,
+  AuthUser,
+  HealthResponse,
+  StatsResponse,
+} from "@/lib/api";
 
 const SUGGESTIONS = [
   "What is the OEE target for Plant A in Q1 2026?",
@@ -52,9 +57,34 @@ type Props = {
   health: HealthResponse | null;
   stats: StatsResponse | null;
   user?: AuthUser | null;
+  accessPolicy?: AccessPolicyResponse | null;
   onPickSuggestion: (s: string) => void;
   onNewChat: () => void;
   onSignOut?: () => void;
+};
+
+// Visual tone per document-classification tier. The tone scales with the
+// "sensitivity" of the tier so a plant manager's confidential badge looks
+// distinctly different from an operator's public badge.
+const TIER_TONE: Record<
+  "public" | "restricted" | "confidential",
+  { pill: string; label: string; icon: string }
+> = {
+  public: {
+    pill: "bg-emerald-50 text-emerald-800 border-emerald-200",
+    label: "Public",
+    icon: "🟢",
+  },
+  restricted: {
+    pill: "bg-amber-50 text-amber-800 border-amber-200",
+    label: "Restricted",
+    icon: "🟡",
+  },
+  confidential: {
+    pill: "bg-rose-50 text-rose-800 border-rose-200",
+    label: "Confidential",
+    icon: "🔴",
+  },
 };
 
 // Visual tone per role family so the badge is glanceable in the sidebar.
@@ -74,6 +104,7 @@ export function Sidebar({
   health,
   stats,
   user,
+  accessPolicy,
   onPickSuggestion,
   onNewChat,
   onSignOut,
@@ -113,7 +144,7 @@ export function Sidebar({
           <div className="mt-0.5 truncate text-[11px] text-ink-500">
             {user.user_id}
           </div>
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span
               className={`inline-block rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
                 ROLE_TONE[user.role] ?? "bg-cream-100 text-ink-700 border-ink-900/10"
@@ -121,7 +152,25 @@ export function Sidebar({
             >
               {user.role}
             </span>
+            {accessPolicy ? (
+              <span
+                title={`Knowledge-base access tier — this user can read ${accessPolicy.allowed_classifications.join(", ")} content.`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${TIER_TONE[accessPolicy.max_tier].pill}`}
+              >
+                <span aria-hidden>{TIER_TONE[accessPolicy.max_tier].icon}</span>
+                <span>KB · {TIER_TONE[accessPolicy.max_tier].label}</span>
+              </span>
+            ) : null}
           </div>
+          {accessPolicy ? (
+            <p className="mt-2 text-[11px] leading-snug text-ink-400">
+              Knowledge base filtered to{" "}
+              <span className="font-medium text-ink-600">
+                {accessPolicy.allowed_classifications.join(" + ")}
+              </span>{" "}
+              content for this role.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

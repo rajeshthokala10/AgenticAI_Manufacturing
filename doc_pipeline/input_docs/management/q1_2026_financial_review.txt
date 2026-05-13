@@ -1,0 +1,69 @@
+CONFIDENTIAL — EXECUTIVE FINANCIAL REVIEW
+Plant Manager + Procurement Manager eyes only. Do not redistribute.
+
+================================================================================
+Q1 2026 FINANCIAL REVIEW — Houston Manufacturing Plant
+Prepared by: Office of the CFO
+Period: Jan 1, 2026 – Mar 31, 2026
+================================================================================
+
+1. REVENUE & MARGIN SUMMARY
+
+   Net Plant Revenue ............... $42.7M  (+8.4% YoY, +2.1% vs plan)
+   Gross Margin .................... 31.2%   (plan 29.5%, +170 bps)
+   EBITDA .......................... $7.9M   (18.5% of revenue)
+   Operating Income ................ $5.2M   (12.2% of revenue)
+   Free Cash Flow .................. $4.1M
+
+   The margin beat is driven primarily by lower scrap on Line 3 after the
+   bearing recall remediation closed in February, and by a deferred
+   maintenance benefit on CNC-12 that will reverse in Q2.
+
+2. CAPEX EXECUTION VS APPROVED PLAN
+
+   Approved FY26 capex envelope .... $18.0M
+   Committed YTD ................... $4.6M  (26% of plan)
+   Cash deployed YTD ............... $2.1M  (12% of plan)
+   At-risk capex ................... $1.8M  (CNC spindle replacement
+                                              awaiting board sign-off)
+
+   Major capex projects in-flight:
+     - Servo drive replacement, Line 2     — $1.4M committed, on schedule
+     - Vision system upgrade, QA cell      — $0.9M committed, +6 weeks late
+     - Capacity expansion, Line 5          — $2.3M approved, kickoff Q2
+
+3. SUPPLIER COST EXPOSURE (TOP 5)
+
+   #1  SKF North America     Bearings, spindle parts   $3.4M YTD spend
+   #2  Siemens Industry      Servo drives, PLCs        $2.1M YTD spend
+   #3  Sandvik Coromant      Cutting tools, inserts    $1.8M YTD spend
+   #4  Parker Hannifin       Hydraulics, pneumatics    $1.2M YTD spend
+   #5  Emerson Automation    Control valves, sensors   $1.0M YTD spend
+
+   Single-source exposure represents 38% of total Q1 spend — board
+   directive is to reduce this to <25% by year-end.
+
+4. WORKING CAPITAL & INVENTORY HEALTH
+
+   Inventory turns ................. 6.8     (target 7.5)
+   Days inventory outstanding ...... 53      (target 49)
+   Slow-moving stock provision ..... $0.7M   (released $0.2M from Q4)
+
+   Spare-parts inventory grew 4.1% sequentially driven by safety-stock
+   build for the planned Line 3 PM in May. Action: review the $0.4M
+   excess on legacy DC servo motors after the Line 2 cutover completes.
+
+5. FORECAST & RISKS
+
+   FY26 EBITDA guidance unchanged at $32-34M. Key downside risks:
+     - Bearing tariff increase (10-15% additional duty) under review by USTR.
+       Estimated annualised exposure: $1.1M.
+     - Servo drive single-source dependency on Siemens — qualification of
+       Yaskawa second-source is 60% complete, target Q3 closeout.
+     - Labour contract renegotiation, July 2026. Provision of $0.8M
+       per percentage point of wage increase above the 3.5% plan.
+
+================================================================================
+APPENDIX A — Confidential Margin Drivers Worksheet (not for circulation)
+APPENDIX B — Q1 Bookings vs Billings (detailed lines, not for circulation)
+================================================================================

@@ -8,7 +8,7 @@ Output:
 
     system_design/system_architecture.pdf
 
-The PDF is a 6-page design document:
+The PDF is a 7-page design document:
 
   Page 1 — Top-level architecture diagram
            Clients · API · Orchestration · NLU · Retrieval · LLMs ·
@@ -37,6 +37,11 @@ The PDF is a 6-page design document:
            Edge-level catalogue: from → to · payload · auth · failure
            modes · p50 latency. The single source of truth for every
            in-process and HTTP boundary in the system.
+
+  Page 7 — Role-Based Knowledge-Base ACLs
+           Three-tier document classification, role → tier read-sets,
+           ingest-time tagging, ContextVar-scoped retriever filter, and
+           the operator-vs-plant-manager evidence delta.
 """
 
 from __future__ import annotations
@@ -224,7 +229,7 @@ def draw_page1(c):
         "Hybrid retrieval (BM25 + FAISS + KG) \u2022 "
         "Optional cause-ranker \u2022 Critic-validated tiered LLMs",
         page_num=1,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ─── Clients lane ──────────────────────────────────────────────────────
@@ -421,7 +426,7 @@ def draw_page2(c):
         "this StateGraph. The procedural orchestrator follows the "
         "same logical flow.",
         page_num=2,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ─── Top half: graph topology ─────────────────────────────────────────
@@ -520,7 +525,7 @@ def draw_page3(c):
         "(answer = gpt-4o, critic = qwen2.5:3b on Ollama). "
         "Local models are free; OpenAI pricing per core/llm_client.py.",
         page_num=3,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ─── Section 1: Per-mode summary ──────────────────────────────────────
@@ -657,7 +662,7 @@ def draw_page4(c):
         "criticality_check + human_approval (interrupt) \u2022 SQLite checkpointer "
         "\u2022 audit log \u2022 USE_HITL=true",
         page_num=4,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ── Topology (rewritten as a clean two-tier flow) ──────────────────────
@@ -995,7 +1000,7 @@ def draw_page5(c):
         "interrupt \u2192 buyer signs off from the Approvals tab. Each step names "
         "the file and wire payload.",
         page_num=5,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ─── Lane setup ────────────────────────────────────────────────────────
@@ -1178,7 +1183,7 @@ def draw_page6(c):
         "single source of truth when changing a payload, an auth check, "
         "or a failure mode.",
         page_num=6,
-        total_pages=6,
+        total_pages=7,
     )
 
     # ─── Section 1: UI → API (HTTP) ────────────────────────────────────────
@@ -1311,6 +1316,390 @@ def draw_page6(c):
     )
 
 
+# ─── Page 7 — Role-Based Knowledge-Base ACLs ────────────────────────────────
+
+
+def draw_page7(c):
+    """Document-level RBAC on the RAG corpus.
+
+    Visual narrative:
+      Top band   — three-tier classification card row (Public, Restricted,
+                   Confidential) with example documents.
+      Middle row — role-to-classification read-set matrix (rows = roles,
+                   columns = tiers, dots = entitlement).
+      Lower row — left  : ingest \u2192 tag flow (folder convention).
+                  right : query-time filter flow (ContextVar \u2192 retriever).
+      Footer ribbon — operator-vs-plant-manager evidence delta on the
+                   smoke-test query, with the security guarantee tagline.
+    """
+    page_w, page_h = landscape(letter)
+    draw_page_header(
+        c,
+        "Role-Based Knowledge-Base Access (Document ACLs)",
+        "Three-tier classification \u2022 ContextVar-scoped retriever filter \u2022 "
+        "smoke-test proven \u2022 core/document_acl.py",
+        page_num=7,
+        total_pages=7,
+    )
+
+    # Local palette ---------------------------------------------------------
+    PUBLIC_COL       = HexColor("#15803D")  # green
+    PUBLIC_FILL      = HexColor("#DCFCE7")
+    RESTRICTED_COL   = HexColor("#B45309")  # amber
+    RESTRICTED_FILL  = HexColor("#FEF3C7")
+    CONFIDENTIAL_COL = HexColor("#B91C1C")  # red
+    CONFIDENTIAL_FILL = HexColor("#FEE2E2")
+    INK              = HexColor("#0F172A")
+    INK_SOFT         = HexColor("#475569")
+    PANEL_BORDER     = HexColor("#CBD5E1")
+    PANEL_FILL       = HexColor("#FFFFFF")
+    DOT_ON           = HexColor("#0F172A")
+    DOT_OFF          = HexColor("#CBD5E1")
+
+    # ── Band 1: classification cards ──────────────────────────────────────
+    band1_top = page_h - 78
+    band1_h = 100
+    band1_y = band1_top - band1_h
+
+    card_w = (page_w - 36 * 2 - 24) / 3  # 3 cards with 12px gutter
+    card_h = band1_h - 4
+    gutter = 12
+
+    cards = [
+        {
+            "title": "public",
+            "label": "Public",
+            "subtitle": "everyone (incl. operators)",
+            "border": PUBLIC_COL,
+            "fill": PUBLIC_FILL,
+            "examples": [
+                "SOPs (CNC machining, conveyor PM)",
+                "Alarm-response procedures",
+                "Equipment manuals (pumps, presses)",
+                "Public safety bulletins",
+                "Production / quality plan summaries",
+            ],
+        },
+        {
+            "title": "restricted",
+            "label": "Restricted",
+            "subtitle": "every checker role (not operator)",
+            "border": RESTRICTED_COL,
+            "fill": RESTRICTED_FILL,
+            "examples": [
+                "Regulatory incident response playbook",
+                "Internal RCA (Q4 spindle-bearing case)",
+                "Litigation-sensitive draft findings",
+                "Detailed work orders + RCAs",
+                "Lockout / permit-to-work records",
+            ],
+        },
+        {
+            "title": "confidential",
+            "label": "Confidential",
+            "subtitle": "plant_manager + procurement_manager only",
+            "border": CONFIDENTIAL_COL,
+            "fill": CONFIDENTIAL_FILL,
+            "examples": [
+                "Q1 2026 financial review (EBITDA, capex)",
+                "Project Meridian M&A diligence paper",
+                "Strategic supplier pricing (SKF, Siemens, Sandvik)",
+                "Leadership succession + retention plan",
+                "MFN clauses, walk-away prices",
+            ],
+        },
+    ]
+
+    for i, card in enumerate(cards):
+        x = 36 + i * (card_w + gutter)
+        # Card body
+        c.setFillColor(card["fill"])
+        c.setStrokeColor(card["border"])
+        c.setLineWidth(1.2)
+        c.roundRect(x, band1_y, card_w, card_h, 8, fill=1, stroke=1)
+
+        # Title + tier id
+        c.setFillColor(card["border"])
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(x + 12, band1_y + card_h - 18, card["label"])
+        c.setFont("Helvetica", 7.5)
+        c.drawString(x + 12, band1_y + card_h - 30,
+                     f"tier id: \u201c{card['title']}\u201d  \u2022  {card['subtitle']}")
+
+        # Hairline separator
+        c.setStrokeColor(card["border"])
+        c.setLineWidth(0.4)
+        c.line(x + 12, band1_y + card_h - 36, x + card_w - 12,
+               band1_y + card_h - 36)
+
+        # Example bullets
+        c.setFillColor(INK)
+        c.setFont("Helvetica", 7.3)
+        line_y = band1_y + card_h - 46
+        for ex in card["examples"]:
+            c.drawString(x + 14, line_y, "\u2022 " + ex)
+            line_y -= 9.5
+
+    # ── Band 2: role × tier read-set matrix ───────────────────────────────
+    band2_top = band1_y - 22
+    section_label_y = band2_top
+    c.setFillColor(INK)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, section_label_y, "Role \u2192 tier read-sets")
+    c.setFillColor(INK_SOFT)
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(
+        36, section_label_y - 11,
+        "Each row is a signup role. A filled dot means the retrievers will "
+        "return chunks at that tier for the signed-in user.",
+    )
+
+    # Matrix geometry
+    matrix_top = section_label_y - 22
+    role_col_w = 170
+    tier_col_w = 95
+    row_h = 13
+    header_h = 16
+
+    roles = [
+        ("operator",              "line / control-room operator"),
+        ("shift_supervisor",      "shift supervisor"),
+        ("maintenance_planner",   "maintenance planner"),
+        ("maintenance_engineer",  "maintenance engineer"),
+        ("ehs_officer",           "EHS officer"),
+        ("quality_engineer",      "quality engineer"),
+        ("buyer",                 "buyer (POs \u2264 $10k)"),
+        ("procurement_manager",   "procurement manager"),
+        ("plant_manager",         "plant manager"),
+    ]
+    # read-set membership (must match ROLE_TO_CLASSIFICATIONS in code)
+    membership = {
+        "operator":             ("on", "off", "off"),
+        "shift_supervisor":     ("on", "on",  "off"),
+        "maintenance_planner":  ("on", "on",  "off"),
+        "maintenance_engineer": ("on", "on",  "off"),
+        "ehs_officer":          ("on", "on",  "off"),
+        "quality_engineer":     ("on", "on",  "off"),
+        "buyer":                ("on", "on",  "off"),
+        "procurement_manager":  ("on", "on",  "on"),
+        "plant_manager":        ("on", "on",  "on"),
+    }
+    tier_headers = [
+        ("public",       PUBLIC_COL),
+        ("restricted",   RESTRICTED_COL),
+        ("confidential", CONFIDENTIAL_COL),
+    ]
+
+    matrix_w = role_col_w + tier_col_w * 3
+    matrix_h = header_h + row_h * len(roles)
+    matrix_y = matrix_top - matrix_h
+
+    # Outer panel
+    c.setFillColor(PANEL_FILL)
+    c.setStrokeColor(PANEL_BORDER)
+    c.setLineWidth(0.6)
+    c.roundRect(36, matrix_y, matrix_w, matrix_h, 4, fill=1, stroke=1)
+
+    # Header row
+    header_y = matrix_top - header_h
+    c.setFillColor(TABLE_HEADER_BG)
+    c.rect(36, header_y, matrix_w, header_h, fill=1, stroke=0)
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(36 + 8, header_y + 5, "role  (rbac.py)")
+    for i, (label, col) in enumerate(tier_headers):
+        cx = 36 + role_col_w + tier_col_w * i + tier_col_w / 2
+        c.drawCentredString(cx, header_y + 5, label)
+
+    # Body rows
+    for i, (role_id, role_desc) in enumerate(roles):
+        row_y = header_y - (i + 1) * row_h
+        if i % 2 == 0:
+            c.setFillColor(TABLE_ALT_ROW)
+            c.rect(36, row_y, matrix_w, row_h, fill=1, stroke=0)
+        c.setFillColor(INK)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(36 + 8, row_y + 5, role_id)
+        c.setFillColor(INK_SOFT)
+        c.setFont("Helvetica", 7)
+        c.drawString(36 + 8 + 110, row_y + 5, role_desc)
+
+        # Dots
+        for j, status in enumerate(membership[role_id]):
+            cx = 36 + role_col_w + tier_col_w * j + tier_col_w / 2
+            cy = row_y + row_h / 2
+            tier_col = tier_headers[j][1]
+            if status == "on":
+                c.setFillColor(tier_col)
+                c.setStrokeColor(tier_col)
+                c.circle(cx, cy, 4, fill=1, stroke=1)
+            else:
+                c.setFillColor(DOT_OFF)
+                c.setStrokeColor(DOT_OFF)
+                c.circle(cx, cy, 2.5, fill=1, stroke=1)
+
+    # ── Band 3: ingest pipeline (left) + query-time filter (right) ────────
+    band3_top = matrix_y - 18
+    panel_h = 132
+    panel_w = (page_w - 36 * 2 - 18) / 2
+    band3_y = band3_top - panel_h
+
+    def section_title(x, y, title, subtitle):
+        c.setFillColor(INK)
+        c.setFont("Helvetica-Bold", 10.5)
+        c.drawString(x, y, title)
+        c.setFillColor(INK_SOFT)
+        c.setFont("Helvetica-Oblique", 7.5)
+        c.drawString(x, y - 10, subtitle)
+
+    # Left panel: ingest-time tagging
+    section_title(
+        36, band3_top,
+        "Ingest-time tagging  (one folder convention, zero front-matter)",
+        "doc_pipeline/document_ingestion.py + chunking.py + "
+        "core.document_acl.classify_from_path",
+    )
+    c.setFillColor(PANEL_FILL)
+    c.setStrokeColor(PANEL_BORDER)
+    c.setLineWidth(0.6)
+    c.roundRect(36, band3_y, panel_w, panel_h - 22, 4, fill=1, stroke=1)
+
+    # Folder tree (left half of left panel)
+    tree_x = 36 + 12
+    tree_y = band3_y + panel_h - 22 - 16
+    c.setFillColor(INK)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(tree_x, tree_y, "doc_pipeline/input_docs/")
+    tree_lines = [
+        ("\u251c\u2500 sop_cnc_machining.txt",              "public",       PUBLIC_COL),
+        ("\u251c\u2500 quality_control_manual.pdf",          "public",       PUBLIC_COL),
+        ("\u251c\u2500 production_metrics_q1_2026.xlsx",     "public",       PUBLIC_COL),
+        ("\u251c\u2500 restricted/",                         "",             None),
+        ("\u2502   \u251c\u2500 regulatory_incident_response_plan.txt",
+                                                              "restricted",   RESTRICTED_COL),
+        ("\u2502   \u2514\u2500 internal_incident_rca_2025_q4.txt",
+                                                              "restricted",   RESTRICTED_COL),
+        ("\u2514\u2500 management/",                          "",             None),
+        ("    \u251c\u2500 q1_2026_financial_review.txt",     "confidential", CONFIDENTIAL_COL),
+        ("    \u251c\u2500 acquisition_target_assessment.txt","confidential", CONFIDENTIAL_COL),
+        ("    \u251c\u2500 strategic_supplier_pricing.txt",   "confidential", CONFIDENTIAL_COL),
+        ("    \u2514\u2500 leadership_succession_2026.txt",   "confidential", CONFIDENTIAL_COL),
+    ]
+    c.setFont("Helvetica", 7)
+    line_y = tree_y - 10
+    for path, tag, col in tree_lines:
+        c.setFillColor(INK)
+        c.drawString(tree_x + 6, line_y, path)
+        if tag and col:
+            tag_x = tree_x + 245
+            tag_w = 54
+            c.setFillColor(col)
+            c.setStrokeColor(col)
+            c.roundRect(tag_x, line_y - 2, tag_w, 9, 4.5, fill=1, stroke=1)
+            c.setFillColor(white)
+            c.setFont("Helvetica-Bold", 6.2)
+            c.drawCentredString(tag_x + tag_w / 2, line_y + 0.5, tag.upper())
+            c.setFont("Helvetica", 7)
+        line_y -= 9
+
+    # Right panel: query-time filter
+    right_panel_x = 36 + panel_w + 18
+    section_title(
+        right_panel_x, band3_top,
+        "Query-time filter  (zero parameter plumbing)",
+        "ContextVar set by FastAPI per request \u2192 retrievers honour it deep in the stack",
+    )
+    c.setFillColor(PANEL_FILL)
+    c.setStrokeColor(PANEL_BORDER)
+    c.setLineWidth(0.6)
+    c.roundRect(right_panel_x, band3_y, panel_w, panel_h - 22, 4, fill=1, stroke=1)
+
+    # Flow diagram inside the right panel
+    flow_steps = [
+        ("Bearer token", "POST /api/chat", HexColor("#FEF3C7"), HexColor("#B45309")),
+        ("with_user_classifications(role)", "core/document_acl.py", HexColor("#DCFCE7"), HexColor("#15803D")),
+        ("HybridRetriever.retrieve()", "BM25 \u22c4 vector \u22c4 graph \u2192 RRF", HexColor("#CFFAFE"), HexColor("#0E7490")),
+        ("filter_chunks(fused)", "drops chunks whose .classification \u2209 read-set", HexColor("#F3E8FF"), HexColor("#7E22CE")),
+        ("LLM prompt", "evidence the user is entitled to see", HexColor("#F1F5F9"), HexColor("#334155")),
+    ]
+    step_w = panel_w - 24
+    step_h = 18
+    step_x = right_panel_x + 12
+    step_y = band3_y + panel_h - 22 - 10 - step_h
+    for i, (title, sub, fill, border) in enumerate(flow_steps):
+        c.setFillColor(fill)
+        c.setStrokeColor(border)
+        c.setLineWidth(1.0)
+        c.roundRect(step_x, step_y, step_w, step_h, 4, fill=1, stroke=1)
+        c.setFillColor(border)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(step_x + 10, step_y + step_h - 9, title)
+        c.setFillColor(INK_SOFT)
+        c.setFont("Helvetica", 6.5)
+        c.drawString(step_x + 10, step_y + 4, sub)
+        if i < len(flow_steps) - 1:
+            arrow_y = step_y - 1
+            c.setStrokeColor(INK_SOFT)
+            c.setLineWidth(0.8)
+            c.line(step_x + step_w / 2, arrow_y, step_x + step_w / 2, arrow_y - 2)
+            # tiny arrowhead
+            p = c.beginPath()
+            p.moveTo(step_x + step_w / 2 - 2.5, arrow_y - 2)
+            p.lineTo(step_x + step_w / 2 + 2.5, arrow_y - 2)
+            p.lineTo(step_x + step_w / 2,       arrow_y - 5)
+            p.close()
+            c.setFillColor(INK_SOFT)
+            c.drawPath(p, fill=1, stroke=0)
+        step_y -= step_h + 2
+
+    # ── Band 4: proof-point ribbon (operator vs plant_manager evidence) ───
+    # Pin the ribbon a fixed distance above the footer so it never collides
+    # with the page-footer line when the upper bands shrink.
+    ribbon_h = 50
+    ribbon_y = 42  # leaves ~20px clear above the footer baseline
+    ribbon_top = ribbon_y + ribbon_h
+
+    c.setFillColor(HexColor("#0F172A"))
+    c.setStrokeColor(HexColor("#0F172A"))
+    c.roundRect(36, ribbon_y, page_w - 36 * 2, ribbon_h, 6, fill=1, stroke=1)
+
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(48, ribbon_y + ribbon_h - 13,
+                 "Smoke-test proof  \u2014  scripts/smoke_test_acl.py")
+
+    c.setFont("Helvetica", 7.4)
+    c.setFillColor(HexColor("#E2E8F0"))
+    c.drawString(
+        48, ribbon_y + ribbon_h - 25,
+        "Query: \u201cQ1 2026 EBITDA and capex execution plan\u201d  \u2192  same FAISS index, two roles:",
+    )
+
+    c.setFillColor(HexColor("#FCA5A5"))
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(48, ribbon_y + 16,
+                 "operator (public-only) \u2192 0 confidential chunks; top-3:")
+    c.setFillColor(white)
+    c.setFont("Helvetica", 7.3)
+    c.drawString(252, ribbon_y + 16,
+                 "quality_control_manual.pdf, production_planning_report.pdf \u00d72")
+
+    c.setFillColor(HexColor("#86EFAC"))
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(48, ribbon_y + 5,
+                 "plant_manager (all tiers)  \u2192 5 confidential chunks; top-3:")
+    c.setFillColor(white)
+    c.setFont("Helvetica", 7.3)
+    c.drawString(252, ribbon_y + 5,
+                 "q1_2026_financial_review.txt \u00d73 (Header, Revenue & Margin, Capex Execution)")
+
+    draw_page_footer(
+        c,
+        "Confidentiality is a data-pipeline guarantee enforced before the LLM ever sees the chunk \u2014 "
+        "not a prompt-engineering pinky-swear.",
+    )
+
+
 # ─── Driver ─────────────────────────────────────────────────────────────────
 
 
@@ -1321,7 +1710,7 @@ def main():
     c.setAuthor("hybrid-graphrag-manufacturing")
     c.setSubject(
         "Architecture · LangGraph topology · Cost & latency · HITL · "
-        "Low-level component sequence · Interaction contracts"
+        "Low-level component sequence · Interaction contracts · Document ACLs"
     )
 
     draw_page1(c)
@@ -1340,6 +1729,9 @@ def main():
     c.showPage()
 
     draw_page6(c)
+    c.showPage()
+
+    draw_page7(c)
     c.showPage()
 
     c.save()

@@ -11,6 +11,7 @@ import { isCheckerRole } from "@/components/dashboard-atoms";
 import {
   api,
   setAuthToken,
+  type AccessPolicyResponse,
   type ApprovalSnapshot,
   type AuthUser,
   type ChatTurn,
@@ -49,6 +50,8 @@ export default function ChatPage() {
   );
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [accessPolicy, setAccessPolicy] =
+    useState<AccessPolicyResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("chat");
   // Bumped after every approval action so the dashboard refetches without a
   // manual reload.
@@ -84,11 +87,37 @@ export default function ChatPage() {
     }
     setAuthToken(null);
     setAuthUser(null);
+    setAccessPolicy(null);
     setTurns([]);
     setAwaitingPrompt(null);
     setPendingThreadId(null);
     setPendingDetail(null);
   }, []);
+
+  // Pull the document-ACL view whenever the signed-in user changes so the
+  // sidebar can render the "Knowledge access tier" badge. The endpoint is
+  // tolerant of anonymous callers, but we only show the badge once we
+  // actually have a user.
+  useEffect(() => {
+    let cancelled = false;
+    if (!authUser) {
+      setAccessPolicy(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    api
+      .accessPolicy()
+      .then((p) => {
+        if (!cancelled) setAccessPolicy(p);
+      })
+      .catch(() => {
+        if (!cancelled) setAccessPolicy(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
 
   // Bootstrap session id from localStorage (or create one).
   useEffect(() => {
@@ -249,6 +278,7 @@ export default function ChatPage() {
         health={health}
         stats={stats}
         user={authUser}
+        accessPolicy={accessPolicy}
         onPickSuggestion={handlePickSuggestion}
         onNewChat={handleNewChat}
         onSignOut={handleSignOut}

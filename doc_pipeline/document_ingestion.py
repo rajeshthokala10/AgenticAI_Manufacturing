@@ -242,8 +242,13 @@ class DocumentIngestion:
         supported = set(self.parsers.keys())
         all_docs: list[Document] = []
 
-        for file_path in sorted(directory.iterdir()):
-            if file_path.suffix.lower() in supported:
+        # Recurse so classification subfolders (``management/``,
+        # ``restricted/``) ship their documents through the same parser
+        # pipeline. ``classify_from_path`` in ``core.document_acl`` reads
+        # the folder name back out at chunking time to attach the
+        # classification tag.
+        for file_path in sorted(directory.rglob("*")):
+            if file_path.is_file() and file_path.suffix.lower() in supported:
                 all_docs.extend(self.ingest_file(file_path))
 
         logger.info("Total: %d document segments from %s", len(all_docs), directory)

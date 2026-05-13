@@ -1,0 +1,70 @@
+CONFIDENTIAL — STRATEGIC SUPPLIER PRICING & CONTRACT TERMS
+Plant Manager + Procurement Manager only. Do not share with buyers below VP.
+
+================================================================================
+STRATEGIC SUPPLIER MASTER PRICING BOOK
+Effective: Apr 1, 2026 – Mar 31, 2027
+Owner: Procurement Manager, countersigned by Plant Manager
+================================================================================
+
+The pricing, rebate tiers, and contract terms below are the *negotiated*
+positions with strategic suppliers. They underwrite the FY26 margin plan
+and must not be disclosed to:
+  - Operators or shift supervisors (who only need part numbers + lead times).
+  - Buyers issuing routine POs (who see catalogue prices, not contract tiers).
+  - External parties or auditors without legal review.
+
+1. SKF NORTH AMERICA — BEARINGS & SPINDLE PARTS
+
+   Master Service Agreement: signed Sep 2024, expires Aug 2027.
+   Annual minimum commit ............... $3.0M
+   Volume rebate tier structure:
+     $3.0M – $4.0M  →  4.0% rebate, paid quarterly
+     $4.0M – $5.0M  →  6.5% rebate, paid quarterly
+     $5.0M+         →  9.0% rebate + 30-day extended payment terms
+   Most-favoured-customer clause: yes (signed addendum 2024-11).
+   Tariff pass-through: capped at 50% above 8% duty.
+   Single-source SKUs: BRG-7203, BRG-7305-P4, SPN-CNC-12-SET.
+
+2. SIEMENS INDUSTRY — SERVO DRIVES & PLCS
+
+   Frame Agreement: signed Jan 2025, expires Dec 2027.
+   List price discount baseline ........ 22% off published list.
+   Annual rebate (over $2.0M) .......... 3.5% calendar-year payout.
+   Spare-part service level ............ 95% next-day for tier-A SKUs.
+   Termination: 12 months written notice; liquidated damages cap $400k.
+   Strategic note: qualification of Yaskawa as second-source is the only
+   negotiating leverage we hold; do NOT signal weakness in renewal talks.
+
+3. SANDVIK COROMANT — CUTTING TOOLS
+
+   Consigned-stock agreement: revenue-recognised on consumption.
+   Discount off list .................. 28% baseline, 33% above $1.5M.
+   Tool-life guarantee penalty ........ $0.05/insert below stated
+                                         tool-life (rarely invoked).
+   New-product trial window ........... 90 days, no obligation to buy.
+   Confidentiality clause: pricing not to be shared with any party
+   competing with Sandvik (i.e. Kennametal, Iscar reps).
+
+4. PARKER HANNIFIN — HYDRAULICS & PNEUMATICS
+
+   Renewal in negotiation — Procurement Manager to lead, target close
+   June 2026. Internal walk-away: 25% off list at $1.2M+ commit.
+   Backup: Bosch Rexroth (samples qualified, lead-time disadvantage
+   of 3-4 weeks on tier-A SKUs — do NOT disclose this gap to Parker).
+
+5. CONTRACT-LEVEL CONFIDENTIALITY MATRIX
+
+   Buyers may see ......... catalogue prices, lead times, MOQ, vendor IDs.
+   Buyers may NOT see ..... rebate tiers, MFN clauses, walk-away prices,
+                            backup-supplier qualification status,
+                            tariff pass-through caps.
+   Plant Manager + Procurement Manager only ........ everything above.
+
+   Violation of this matrix is grounds for revocation of procurement
+   authority. All exceptions must be documented and signed by the Plant
+   Manager.
+
+================================================================================
+END OF DOCUMENT — CONFIDENTIAL
+================================================================================

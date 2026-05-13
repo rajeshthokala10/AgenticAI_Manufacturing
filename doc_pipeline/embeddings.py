@@ -104,14 +104,24 @@ class EmbeddingPipeline:
             [query], normalize_embeddings=True,
         ).astype(np.float32)
 
-        k = min(top_k * 2, self.index.ntotal)
+        # Over-fetch so we still return ``top_k`` results after the ACL
+        # filter strips chunks the current user is not entitled to read.
+        # The factor of 4 + offset is generous enough that even a heavy
+        # confidential corpus rarely starves a public-only operator.
+        k = min(max(top_k * 4, top_k + 10), self.index.ntotal)
         scores, indices = self.index.search(query_embedding, k)
 
+        from core.document_acl import active_classifications
+
+        allowed = active_classifications()
         results: list[SearchResult] = []
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0 or idx >= len(self.chunks) or score < score_threshold:
                 continue
             chunk = self.chunks[idx]
+            cls = (chunk.metadata or {}).get("classification", "public")
+            if cls not in allowed:
+                continue
             results.append(SearchResult(
                 text=chunk.text, metadata=chunk.metadata,
                 score=float(score), chunk_id=chunk.chunk_id,

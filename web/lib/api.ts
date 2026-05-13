@@ -152,6 +152,19 @@ export type AuditEntry = {
   comments?: string | null;
 };
 
+export type AccessPolicyResponse = {
+  role: string | null;
+  max_tier: "public" | "restricted" | "confidential";
+  allowed_classifications: Array<"public" | "restricted" | "confidential">;
+  classifications_catalogue: Array<{
+    id: "public" | "restricted" | "confidential";
+    label: string;
+    description: string;
+  }>;
+  user_id?: string;
+  display_name?: string;
+};
+
 export type MyApprovalsResponse = {
   user: AuthUser;
   stats: {
@@ -266,4 +279,5 @@ export const api = {
     jsonFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () => jsonFetch<AuthUser>("/api/auth/me"),
   myApprovals: () => jsonFetch<MyApprovalsResponse>("/api/approvals/my"),
+  accessPolicy: () => jsonFetch<AccessPolicyResponse>("/api/access/policy"),
 };
