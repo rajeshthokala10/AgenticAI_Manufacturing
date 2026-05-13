@@ -36,7 +36,7 @@ logger = logging.getLogger("pipeline.chat")
 # ── Conversation state ─────────────────────────────────────────────────────
 
 Role = Literal["user", "assistant", "system"]
-TurnKind = Literal["text", "correction", "clarify", "answer", "system"]
+TurnKind = Literal["text", "correction", "clarify", "answer", "system", "approval_pending", "approval_resolved"]
 
 
 @dataclass
@@ -63,10 +63,15 @@ class ChatState:
     # Reference to the last completed pipeline result (for rendering panels)
     last_result: Optional[PipelineResult] = None
 
+    # HITL: when the last query paused at an interrupt, the chat tab needs to
+    # show a banner / disable input until the approval is resolved.
+    pending_approval_thread_id: Optional[str] = None
+
     def reset(self) -> None:
         self.turns.clear()
         self.clear_inflight()
         self.last_result = None
+        self.pending_approval_thread_id = None
 
     def clear_inflight(self) -> None:
         self.accumulated_query = ""
@@ -210,7 +215,60 @@ class ChatAgent:
             return state
 
         state.last_result = result
+        return self._render_result(state, query, result)
+
+    def _render_result(self, state: ChatState, query: str, result: PipelineResult) -> ChatState:
+        # HITL: graph paused at an interrupt — surface an approval banner and
+        # remember the thread_id so the UI can disable input until resolved.
+        if result.requires_approval:
+            state.pending_approval_thread_id = result.approval_thread_id
+            risk = result.risk or {}
+            drivers = risk.get("drivers", []) or []
+            score = risk.get("score", 0.0)
+            payload = result.interrupt_payload or {}
+            domain = payload.get("domain", "diagnostic")
+            body_lines = [
+                "🛑 **This action needs supervisor approval before I proceed.**",
+                "",
+                f"Risk score: **{score:.2f}** · domain: `{domain}`",
+            ]
+            if drivers:
+                body_lines.append("Drivers: " + ", ".join(f"`{d}`" for d in drivers[:6]))
+            if payload.get("purchase_request_card"):
+                body_lines.append("")
+                body_lines.append(payload["purchase_request_card"])
+            body_lines.append("")
+            body_lines.append(
+                "_Open the **📋 Approvals** tab to approve, reject, or edit before I send the answer._"
+            )
+            state.turns.append(ChatTurn(
+                role="assistant",
+                content="\n".join(body_lines),
+                kind="approval_pending",
+                meta={
+                    "thread_id": result.approval_thread_id,
+                    "risk": risk,
+                    "domain": domain,
+                    "proposed_answer": result.answer,
+                    "evidence": result.evidence,
+                    "purchase_request": result.purchase_request,
+                    "interrupt_payload": payload,
+                    "corrected_query": query,
+                },
+            ))
+            state.clear_inflight()
+            return state
+
         answer = result.answer or self._synthesize_answer(result)
+        if result.rejected:
+            decision = result.human_decision or {}
+            comments = decision.get("comments") or "_no reason provided_"
+            answer = (
+                "❌ **Action rejected by the human reviewer.** "
+                f"_Reviewer:_ `{decision.get('approver', 'unknown')}`. "
+                f"_Comments:_ {comments}\n\n"
+                "Try rephrasing or escalate offline."
+            )
 
         state.turns.append(ChatTurn(
             role="assistant",
@@ -225,11 +283,43 @@ class ChatAgent:
                 "correction": result.correction,
                 "mode": result.mode,
                 "corrected_query": query,
+                "risk": result.risk,
+                "human_decision": result.human_decision,
+                "purchase_request": result.purchase_request,
+                "rejected": result.rejected,
             },
         ))
 
+        state.pending_approval_thread_id = None
         state.clear_inflight()
         return state
+
+    def apply_resolution(
+        self,
+        state: ChatState,
+        thread_id: str,
+        decision: Dict[str, Any],
+    ) -> ChatState:
+        """Resume a paused diagnostic graph and append the resolved answer.
+
+        Called by the Streamlit "📋 Approvals" tab and by FastAPI's
+        ``/api/approvals/{thread_id}/resume`` endpoint.
+        """
+        try:
+            result = self.pipe.resume_diagnostic(thread_id, decision)
+        except Exception as exc:
+            logger.exception("Resume failure on thread %s", thread_id)
+            state.turns.append(ChatTurn(
+                role="assistant",
+                content=f"⚠️ I couldn't resume the paused workflow: `{exc}`.",
+                kind="system",
+            ))
+            state.pending_approval_thread_id = None
+            return state
+        state.last_result = result
+        # Find the original query that was paused (for rendering meta).
+        query = (result.query or "").strip()
+        return self._render_result(state, query, result)
 
     # ── Helpers ──────────────────────────────────────────────────────────
 

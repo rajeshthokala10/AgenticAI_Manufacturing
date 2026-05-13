@@ -82,6 +82,36 @@ USE_CAUSE_RANKING: bool = os.getenv("USE_CAUSE_RANKING", "false").strip().lower(
     "1", "true", "yes", "on",
 )
 
+# ── Human-in-the-Loop (HITL) approval gate ──────────────────────────────────
+# When enabled, a `criticality_check` node decides per-query whether the
+# proposed answer (or proposed action, e.g. a purchase request) needs a human
+# sign-off. High-risk queries hit a LangGraph `interrupt()` and the graph
+# state is persisted (in-memory or SQLite) so a human can approve/reject from
+# the Streamlit "📋 Approvals" tab or via /api/approvals/{thread_id}/resume.
+# See system_design/HITL_DESIGN.md for the full contract.
+USE_HITL: bool = os.getenv("USE_HITL", "false").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+HITL_RISK_THRESHOLD: float = float(os.getenv("HITL_RISK_THRESHOLD", "0.6"))
+HITL_AUTO_APPROVE_BELOW_USD: float = float(os.getenv("HITL_AUTO_APPROVE_BELOW_USD", "2000"))
+HITL_HIGH_RISK_KEYWORDS: tuple[str, ...] = tuple(
+    kw.strip().lower()
+    for kw in os.getenv(
+        "HITL_HIGH_RISK_KEYWORDS",
+        "lockout,tagout,hot work,fire,explosion,h2s,arc flash,confined space,"
+        "fatal,injury,death,toxic,asphyxiation,radiation,permit-to-work,"
+        "shutdown,emergency",
+    ).split(",")
+    if kw.strip()
+)
+HITL_DB_PATH: Path = Path(
+    os.getenv("HITL_DB_PATH", str(PROCESSED_DIR / "audit.sqlite"))
+)
+# Checkpoint backend for the LangGraph orchestrator when HITL is enabled.
+# "sqlite" (default) requires `langgraph-checkpoint-sqlite`; falls back to
+# "memory" automatically if the import fails.
+HITL_CHECKPOINT_BACKEND: str = os.getenv("HITL_CHECKPOINT_BACKEND", "sqlite").strip().lower()
+
 # ── Chunking ────────────────────────────────────────────────────────────────
 CHUNK_SIZE: int = 512
 CHUNK_OVERLAP: int = 64

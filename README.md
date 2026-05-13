@@ -51,14 +51,15 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 10. [Conversational Chat & Deployment](#conversational-chat--deployment)
 11. [Critic Loop State Machine](#critic-loop-state-machine)
 12. [Models & LLM Routing](#models--llm-routing)
-13. [Directory Structure](#directory-structure)
-14. [Setup & Installation](#setup--installation)
-15. [Running the Application](#running-the-application)
-16. [Configuration](#configuration)
-17. [Sample Queries](#sample-queries)
-18. [Pipeline Comparison](#pipeline-comparison)
-19. [Troubleshooting](#troubleshooting)
-20. [What Changed in the Unification](#what-changed-in-the-unification)
+13. [Human-in-the-Loop (HITL) Approval Gate](#human-in-the-loop-hitl-approval-gate)
+14. [Directory Structure](#directory-structure)
+15. [Setup & Installation](#setup--installation)
+16. [Running the Application](#running-the-application)
+17. [Configuration](#configuration)
+18. [Sample Queries](#sample-queries)
+19. [Pipeline Comparison](#pipeline-comparison)
+20. [Troubleshooting](#troubleshooting)
+21. [What Changed in the Unification](#what-changed-in-the-unification)
 
 ---
 
@@ -96,6 +97,12 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
   via `.env`.
 - **Critic-driven self-correction** — LLM critic verifies grounding; rejected answers are
   regenerated with feedback up to `MAX_CRITIC_RETRIES`.
+- **Human-in-the-Loop (HITL) approval gate** — opt-in (`USE_HITL=true`) `criticality_check` +
+  `human_approval` LangGraph nodes pause high-risk diagnostic answers and over-threshold purchase
+  requests at a `langgraph.types.interrupt(...)`; durable SQLite checkpointer persists the paused
+  state across restarts; `📋 Approvals` Streamlit tab and `/api/approvals/*` REST endpoints let a
+  reviewer approve / reject / edit; every decision is appended to a SQLite audit log
+  (`core/audit_log.py`).
 - **Side-by-side benchmarking** — Direct LLM vs Classical RAG vs Hybrid GraphRAG with latency,
   tokens, cost, citations, and critic verdicts.
 - **Run-out-of-the-box** — sample documents and a prebuilt FAISS index ship in the repo.
@@ -1019,6 +1026,131 @@ orchestrator (`response["metrics"]`) for every chat turn.
 
 ---
 
+## Human-in-the-Loop (HITL) Approval Gate
+
+Production deployments need a way to **automate the easy decisions and escalate the dangerous
+ones**. The HITL layer adds two LangGraph nodes (`criticality_check` + `human_approval`) plus a
+durable checkpointer so the orchestrator can pause at a `langgraph.types.interrupt(...)`, surface
+the proposal in the Streamlit `📋 Approvals` tab (or via `/api/approvals/*`), and then resume on
+either side of an `Approve` / `Reject` / `Edit & approve` decision.
+
+The full PRD lives in [`system_design/HITL_DESIGN.md`](system_design/HITL_DESIGN.md). This
+section is the operator's quick-start.
+
+### Topology change
+
+```
+START → format → detect_purchase → retrieve → [rank_causes] → generate → criticality_check
+                                                                                 │
+                                                                ┌────────────────┴──────────────────┐
+                                                                ▼                                   ▼
+                                                       human_approval (interrupt)               critic
+                                                                │                                   │
+                                                ┌───approved────┴───rejected───┐         PASS / max retries
+                                                ▼                              ▼                    │
+                                              critic                          END                  END
+                                                │
+                                            PASS / max
+                                                ▼
+                                              END
+```
+
+* **`detect_purchase`** parses the user query for purchase-request intent (Phase C). When intent
+  matches, the parsed `PurchaseRequest` is enriched from the KG (`Equipment ─REQUIRES_PART→
+  SparePart ─SUPPLIED_BY→ Vendor`) and stashed in the graph state.
+* **`criticality_check`** combines deterministic rules (safety keywords, dollar threshold, low
+  critic confidence, high-risk intents like `lockout_tagout` / `shutdown` / `emergency`) with an
+  optional tier-2 LLM grader for the inconclusive band. Returns a `Risk(score, drivers, …)`
+  whose `needs_human` flag drives the next routing.
+* **`human_approval`** calls `interrupt({...})`. The graph state is checkpointed to either an
+  in-memory store or a SQLite file (`HITL_CHECKPOINT_BACKEND=sqlite|memory`). The interrupted
+  thread is exposed via `pipe.pending_approvals()` and `/api/approvals/pending`.
+* On resume (`graph.invoke(Command(resume=decision), config={"configurable": {"thread_id": …}})`)
+  the decision flows back into the node, optionally overwrites the answer with `edited_answer`,
+  and either short-circuits to `END` (rejected) or continues into `critic` (approved).
+
+### Use cases (covered today)
+
+| # | Workflow | Auto-approve when … | Escalates when … |
+| - | -------- | ------------------- | ---------------- |
+| 1 | **Diagnostic / repair recommendation** | Routine PM, no safety keywords, critic PASSes | Lockout/tagout, hot work, fire / emergency / shutdown, low critic confidence |
+| 2 | **Spare-part / purchase request** | Total < `HITL_AUTO_APPROVE_BELOW_USD` (default $2 000) | Total ≥ threshold, single-source vendor, lead time > 7 days, Class-A equipment |
+
+The same envelope (`Risk` + `interrupt` payload) generalises to document-review approvals and KG
+mutations — see the design doc for the future hooks.
+
+### Configuration
+
+```bash
+USE_HITL=true                       # master switch
+HITL_RISK_THRESHOLD=0.6             # Risk.score >= this  → human approval
+HITL_AUTO_APPROVE_BELOW_USD=2000
+HITL_HIGH_RISK_KEYWORDS=lockout,tagout,hot work,fire,explosion,h2s,arc flash,confined space,fatal,injury,death,toxic,asphyxiation,radiation,permit-to-work,shutdown,emergency
+HITL_DB_PATH=data/processed/audit.sqlite
+HITL_CHECKPOINT_BACKEND=sqlite      # 'sqlite' (Phase B, durable) or 'memory' (dev only)
+```
+
+`USE_HITL` requires `USE_LANGGRAPH=true` (the procedural orchestrator does not support
+interrupts). The checkpointer falls back to `memory` automatically if
+`langgraph-checkpoint-sqlite` is unavailable, with a warning in the logs.
+
+### REST surface
+
+```
+GET  /api/approvals/pending              → [{thread_id, ts, summary, risk, drivers, …}]
+GET  /api/approvals/{thread_id}          → full snapshot for one paused workflow
+POST /api/approvals/{thread_id}/resume   → {approved, approver, comments, edited_answer?}
+GET  /api/audit?limit=50&offset=0        → recent decisions + approval-rate stats
+```
+
+`/api/health` now returns `use_hitl` and `use_langgraph` so any UI can hide the Approvals tab
+when the gate is off.
+
+### Streamlit `📋 Approvals` tab
+
+Lists the pending queue as cards (risk score + drivers + proposed answer + purchase-request
+panel when relevant). The reviewer can edit the proposed answer in-line, set the approver name,
+add comments, then click **Approve** or **Reject**. The decision is replayed through
+`apply_resolution` and immediately appended to the originating chat session, plus written to
+the audit log. Recent decisions render below the queue.
+
+When a chat session has a paused thread, the chat tab shows a `⏸️ Workflow paused for approval`
+banner and disables the input box until the reviewer resolves it.
+
+### Persistence (Phase B)
+
+* **LangGraph checkpointer** — `SqliteSaver` persists every node's state to
+  `HITL_DB_PATH`. Threads paused at `human_approval` survive process restarts; the smoke test
+  proves a fresh `LangGraphOrchestrator` instance can `resume(thread_id, …)` against state
+  written by an earlier instance.
+* **Audit log** — `core/audit_log.py` writes one row per approve/reject decision (timestamp,
+  thread_id, approver, risk score + drivers, domain, query, proposed answer, optional edit, free-
+  text comments). Append-only; surfaced via `GET /api/audit` and the Streamlit tab.
+
+### Smoke test
+
+```bash
+.venv/bin/python scripts/smoke_test_hitl.py
+```
+
+Runs five checks without any external LLM call:
+
+1. Safe query auto-approves (no interrupt fired).
+2. Lockout/tagout query pauses → resumes cleanly on approve.
+3. Hot-work query pauses → reject short-circuits to `pipeline_status="rejected"`.
+4. Purchase request `$5 000 BRG-7203` pauses with a populated `purchase_request` payload and a
+   `purchase_value=$5,000>=$2,000` driver.
+5. Audit log writes survive a round-trip and `stats()` reports correct counts.
+
+### Limits & non-goals (intentional, this iteration)
+
+* No authn / authz on `/api/approvals/*` — wire OIDC / SAML in your deployment infra.
+* No multi-stage approval chains (single approver suffices for the demo).
+* No Slack / email notifications — easy to bolt onto the audit log; deliberately out of scope.
+* The Next.js UI shows the chat banner but the rich approval console is Streamlit-only for now.
+
+---
+
 ## Directory Structure
 
 ```
@@ -1189,6 +1321,12 @@ cp .env.example .env
 | `USE_CAUSE_RANKING`    | `false`                       | Insert a dedicated cause-ranking LLM stage between retrieval and answer generation (intent-gated to troubleshooting queries) |
 | `CAUSE_RANK_MODEL`     | `qwen2.5:3b`                  | Model used by the cause-ranker (defaults to free local Ollama; set to e.g. `gpt-4o-mini` for cloud) |
 | `CAUSE_RANK_TOP_K`     | `5`                           | Maximum number of ranked root-cause candidates returned                                            |
+| `USE_HITL`             | `false`                       | Master switch for the Human-in-the-Loop approval gate. Requires `USE_LANGGRAPH=true`.              |
+| `HITL_RISK_THRESHOLD`  | `0.6`                         | `Risk.score >= this` triggers a `human_approval` interrupt.                                        |
+| `HITL_AUTO_APPROVE_BELOW_USD` | `2000`                 | Purchase requests below this dollar amount auto-approve (Phase C).                                |
+| `HITL_HIGH_RISK_KEYWORDS` | safety / regulatory list   | Comma-separated, case-insensitive substrings; any hit auto-escalates.                              |
+| `HITL_DB_PATH`         | `data/processed/audit.sqlite` | SQLite file used for both the LangGraph checkpointer and the audit log.                            |
+| `HITL_CHECKPOINT_BACKEND` | `sqlite`                  | `sqlite` (durable, requires `langgraph-checkpoint-sqlite`) or `memory` (dev only).                 |
 | `NEXT_PUBLIC_API_ORIGIN` | `http://localhost:8000`     | Where the Next.js web UI sends `/api/*` requests     |
 | `API_PORT` / `STREAMLIT_PORT` / `WEB_PORT` | `8000` / `8501` / `3000` | Port overrides honoured by `run.sh` / `stop.sh` |
 | `SKIP_WEB` / `SKIP_STREAMLIT` | _(unset)_              | Set to `1` to skip a service when running `run.sh`   |

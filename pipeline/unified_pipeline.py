@@ -50,6 +50,16 @@ class PipelineResult:
     metrics: Dict[str, Any] = field(default_factory=dict)
     formatted_output: str = ""
 
+    # HITL extensions (Phases A + B + C). All optional; default = no approval.
+    risk: Optional[Dict[str, Any]] = None
+    purchase_request: Optional[Dict[str, Any]] = None
+    requires_approval: bool = False
+    approval_thread_id: Optional[str] = None
+    rejected: bool = False
+    human_decision: Optional[Dict[str, Any]] = None
+    interrupt_payload: Optional[Dict[str, Any]] = None
+    pipeline_status: str = "complete"  # 'complete' | 'awaiting_approval' | 'rejected'
+
     def to_dict(self) -> Dict:
         out = {
             "mode": self.mode,
@@ -61,6 +71,14 @@ class PipelineResult:
             "critic": self.critic,
             "metrics": self.metrics,
             "formatted_output": self.formatted_output,
+            "risk": self.risk,
+            "purchase_request": self.purchase_request,
+            "requires_approval": self.requires_approval,
+            "approval_thread_id": self.approval_thread_id,
+            "rejected": self.rejected,
+            "human_decision": self.human_decision,
+            "interrupt_payload": self.interrupt_payload,
+            "pipeline_status": self.pipeline_status,
         }
         if self.clarification is not None:
             out["intent"] = self.clarification.intent.value
@@ -294,7 +312,7 @@ class ManufacturingPipeline:
             formatted_output="",
         )
 
-    def diagnostic(self, query: str) -> PipelineResult:
+    def diagnostic(self, query: str, thread_id: Optional[str] = None) -> PipelineResult:
         self._require_ready()
         if not self._llm_enabled or self.orchestrator is None:
             raise RuntimeError(
@@ -306,8 +324,60 @@ class ManufacturingPipeline:
 
         # Use the corrected & enriched query for retrieval.
         enriched = clarification.enriched_query if clarification.entities else correction.corrected
-        result = self.orchestrator.process_query(enriched)
 
+        # LangGraph orchestrator supports thread_id (HITL); the procedural one
+        # ignores the kwarg to keep the call shape identical.
+        if self._orchestrator_engine == "langgraph":
+            result = self.orchestrator.process_query(enriched, thread_id=thread_id)
+        else:
+            result = self.orchestrator.process_query(enriched)
+
+        return self._wrap_diagnostic_result(query, result, clarification, correction)
+
+    def resume_diagnostic(
+        self,
+        thread_id: str,
+        decision: Dict[str, Any],
+    ) -> PipelineResult:
+        """Resume a paused diagnostic graph (after a human approve/reject).
+
+        Only supported when the LangGraph orchestrator is active and HITL is
+        enabled. Raises a clear ``RuntimeError`` otherwise.
+        """
+        self._require_ready()
+        if self._orchestrator_engine != "langgraph" or self.orchestrator is None:
+            raise RuntimeError(
+                "Resume requires the LangGraph orchestrator. "
+                "Set USE_LANGGRAPH=true and USE_HITL=true."
+            )
+        if not hasattr(self.orchestrator, "resume"):
+            raise RuntimeError("Active orchestrator does not support resume.")
+        result = self.orchestrator.resume(thread_id, decision)
+        return self._wrap_diagnostic_result(result.get("query", {}).get("original", ""), result)
+
+    def pending_approvals(self) -> List[Dict[str, Any]]:
+        """Snapshot of all paused approvals (LangGraph engine only)."""
+        if self._orchestrator_engine != "langgraph" or self.orchestrator is None:
+            return []
+        if not hasattr(self.orchestrator, "pending_approvals"):
+            return []
+        return self.orchestrator.pending_approvals()
+
+    def get_pending_approval(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        if self._orchestrator_engine != "langgraph" or self.orchestrator is None:
+            return None
+        if not hasattr(self.orchestrator, "get_pending"):
+            return None
+        return self.orchestrator.get_pending(thread_id)
+
+    def _wrap_diagnostic_result(
+        self,
+        query: str,
+        result: Dict[str, Any],
+        clarification: Any = None,
+        correction: Any = None,
+    ) -> PipelineResult:
+        status = result.get("pipeline_status", "complete")
         return PipelineResult(
             mode=PipelineMode.DIAGNOSTIC.value,
             query=query,
@@ -320,6 +390,14 @@ class ManufacturingPipeline:
             critic=result.get("critic"),
             metrics=result.get("metrics", {}),
             formatted_output="",
+            risk=result.get("risk"),
+            purchase_request=result.get("purchase_request"),
+            requires_approval=bool(result.get("awaiting_approval", False)),
+            approval_thread_id=result.get("approval_thread_id"),
+            rejected=(status == "rejected"),
+            human_decision=result.get("human_decision"),
+            interrupt_payload=result.get("interrupt_payload"),
+            pipeline_status=status,
         )
 
     def classical(self, query: str) -> PipelineResult:

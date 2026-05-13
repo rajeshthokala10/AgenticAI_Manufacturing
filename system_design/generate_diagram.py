@@ -210,7 +210,7 @@ def draw_page1(c):
         "Hybrid retrieval (BM25 + FAISS + KG) \u2022 "
         "Optional cause-ranker \u2022 Critic-validated tiered LLMs",
         page_num=1,
-        total_pages=3,
+        total_pages=4,
     )
 
     # ─── Clients lane ──────────────────────────────────────────────────────
@@ -407,7 +407,7 @@ def draw_page2(c):
         "this StateGraph. The procedural orchestrator follows the "
         "same logical flow.",
         page_num=2,
-        total_pages=3,
+        total_pages=4,
     )
 
     # ─── Top half: graph topology ─────────────────────────────────────────
@@ -506,7 +506,7 @@ def draw_page3(c):
         "(answer = gpt-4o, critic = qwen2.5:3b on Ollama). "
         "Local models are free; OpenAI pricing per core/llm_client.py.",
         page_num=3,
-        total_pages=3,
+        total_pages=4,
     )
 
     # ─── Section 1: Per-mode summary ──────────────────────────────────────
@@ -632,6 +632,149 @@ def draw_page3(c):
     )
 
 
+# ─── Page 4 — HITL approval gate ───────────────────────────────────────────
+
+
+def draw_page4(c):
+    page_w, page_h = landscape(letter)
+    draw_page_header(
+        c,
+        "Human-in-the-Loop (HITL) Approval Gate",
+        "criticality_check + human_approval (interrupt) \u2022 SQLite checkpointer "
+        "\u2022 audit log \u2022 USE_HITL=true",
+        page_num=4,
+        total_pages=4,
+    )
+
+    # ── Topology ──
+    y = page_h - 90
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, y, "LangGraph topology with the HITL gate (Phases A + B + C)")
+
+    y -= 18
+    boxes = [
+        ("format", 36, y - 30, 90, 28, "#1E2761"),
+        ("detect_purchase", 132, y - 30, 110, 28, "#7A2048"),
+        ("retrieve", 248, y - 30, 90, 28, "#283593"),
+        ("rank_causes", 344, y - 30, 100, 28, "#5e35b2"),
+        ("generate", 450, y - 30, 90, 28, "#1565c0"),
+        ("criticality_check", 546, y - 30, 120, 28, "#e65100"),
+        ("human_approval\n(interrupt)", 672, y - 60, 130, 50, "#c62828"),
+        ("critic", 672, y - 30, 90, 28, "#2e7d32"),
+        ("END", 768, y - 30, 50, 28, "#424242"),
+    ]
+    for label, x, by, w, h, color in boxes:
+        c.setFillColor(color)
+        c.roundRect(x, by, w, h, 4, fill=1, stroke=0)
+        c.setFillColor("white")
+        c.setFont("Helvetica-Bold", 8.5)
+        for i, line in enumerate(label.split("\n")):
+            c.drawCentredString(x + w / 2, by + h - 12 - i * 10, line)
+
+    # arrows row
+    arrow_y = y - 16
+    for x_from, w_from, gap in [
+        (36, 90, 132),    # format → detect_purchase
+        (132, 110, 248),  # detect_purchase → retrieve
+        (248, 90, 344),   # retrieve → rank_causes (conditional)
+        (344, 100, 450),  # rank_causes → generate
+        (450, 90, 546),   # generate → criticality_check
+    ]:
+        c.setStrokeColor("#444")
+        c.setLineWidth(0.8)
+        c.line(x_from + w_from + 1, arrow_y, gap - 1, arrow_y)
+        c.line(gap - 5, arrow_y - 3, gap - 1, arrow_y)
+        c.line(gap - 5, arrow_y + 3, gap - 1, arrow_y)
+
+    # criticality_check branches
+    c.setStrokeColor("#e65100")
+    c.setLineWidth(1.0)
+    # → human_approval (down-right)
+    c.line(606, y - 30, 672, y - 60)
+    c.setFillColor("#e65100")
+    c.setFont("Helvetica-Oblique", 7.5)
+    c.drawString(610, y - 38, "needs_human")
+    # → critic (right)
+    c.line(666, y - 16, 672, y - 16)
+    c.line(670, y - 13, 672, y - 16)
+    c.line(670, y - 19, 672, y - 16)
+    c.drawString(610, y - 12, "auto-approve")
+    # human_approval → critic (when approved)
+    c.line(737, y - 35, 737, y - 16)
+    c.drawString(680, y - 28, "approved")
+    # human_approval → END (when rejected)
+    c.line(802, y - 35, 793, y - 16)
+    c.drawString(770, y - 38, "rejected")
+    # critic → END
+    c.line(762, y - 16, 768, y - 16)
+    c.line(766, y - 13, 768, y - 16)
+    c.line(766, y - 19, 768, y - 16)
+
+    # ── Risk score breakdown table ──
+    table_y = y - 110
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, table_y, "Risk score drivers — core/criticality_classifier.py")
+
+    headers = ["Driver", "Trigger", "Score bump", "Domain"]
+    rows = [
+        ("safety_keyword:*", "Substring of HITL_HIGH_RISK_KEYWORDS in query or proposed answer", "0.55 + 0.05 / extra hit", "diagnostic"),
+        ("high_risk_intent", "Clarifier intent ∈ {shutdown, emergency, lockout_tagout, permit_to_work}", "0.90", "diagnostic"),
+        ("low_critic_confidence", "Critic verdict.confidence < 0.5", "0.30", "diagnostic"),
+        ("purchase_value≥threshold", "PurchaseRequest.total_usd ≥ HITL_AUTO_APPROVE_BELOW_USD", "0.70", "purchase_request"),
+        ("single_source_vendor", "KG flags the part with single_source=true", "0.65", "purchase_request"),
+        ("long_lead_time", "lead_time_days > 7", "0.55", "purchase_request"),
+        ("class_A_equipment", "Used by an Equipment node tagged criticality=A", "0.70", "purchase_request"),
+        ("llm_grader:*", "Tier-2 LLM grader (only fires for inconclusive 0.3–0.7 band)", "max(score, llm_score)", "any"),
+    ]
+    col_widths = [130, 360, 130, 90]
+    table_y2 = draw_table(c, 36, table_y - 18, headers, rows, col_widths,
+                           font_size=8, row_height=15)
+
+    # ── Bottom: API surface + decision flow ──
+    bottom_y = table_y2 - 30
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, bottom_y, "REST surface (api/server.py)")
+    api_box = [
+        ("GET  /api/approvals/pending",            "list paused HITL workflows"),
+        ("GET  /api/approvals/{thread_id}",        "snapshot of one paused workflow"),
+        ("POST /api/approvals/{thread_id}/resume", "{approved, approver, comments, edited_answer?}"),
+        ("GET  /api/audit?limit=N&offset=M",       "recent decisions + approval-rate stats"),
+    ]
+    c.setFont("Helvetica", 8.5)
+    for i, (route, desc) in enumerate(api_box):
+        c.setFillColor("#283593")
+        c.drawString(36, bottom_y - 16 - i * 13, route)
+        c.setFillColor(SUBTITLE_COLOR)
+        c.drawString(280, bottom_y - 16 - i * 13, desc)
+
+    # State machine on the right
+    sm_x = 540
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(sm_x, bottom_y, "Pipeline status state machine")
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica", 8.5)
+    sm_lines = [
+        "in_progress  →  awaiting_approval  →  complete    (approved)",
+        "in_progress  →  awaiting_approval  →  rejected    (approved=false)",
+        "in_progress  →  complete                          (auto-approve / USE_HITL=false)",
+        "",
+        "Checkpointer: SqliteSaver (HITL_DB_PATH) — survives restarts.",
+        "Audit log:    core/audit_log.py — append-only, one row per decision.",
+    ]
+    for i, line in enumerate(sm_lines):
+        c.drawString(sm_x, bottom_y - 16 - i * 12, line)
+
+    draw_page_footer(
+        c,
+        "USE_HITL=true requires USE_LANGGRAPH=true. See system_design/HITL_DESIGN.md "
+        "for the full PRD.",
+    )
+
+
 # ─── Driver ─────────────────────────────────────────────────────────────────
 
 
@@ -640,7 +783,7 @@ def main():
     c = canvas.Canvas(str(OUTPUT), pagesize=landscape(letter))
     c.setTitle("Hybrid GraphRAG Manufacturing — System Design")
     c.setAuthor("hybrid-graphrag-manufacturing")
-    c.setSubject("Architecture · LangGraph topology · Cost & latency")
+    c.setSubject("Architecture · LangGraph topology · Cost & latency · HITL")
 
     draw_page1(c)
     c.showPage()
@@ -649,6 +792,9 @@ def main():
     c.showPage()
 
     draw_page3(c)
+    c.showPage()
+
+    draw_page4(c)
     c.showPage()
 
     c.save()

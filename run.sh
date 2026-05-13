@@ -44,7 +44,7 @@ WEB_PORT="${WEB_PORT:-3000}"
 # Keep this list small/fast — heavy modules (sentence_transformers, torch) are
 # probed via `find_spec` only, not actually imported, so the check stays under
 # 1 second instead of 10+ seconds.
-REQUIRED_PKGS=(streamlit fastapi uvicorn faiss sentence_transformers networkx pandas openai langgraph langchain_core)
+REQUIRED_PKGS=(streamlit fastapi uvicorn faiss sentence_transformers networkx pandas openai langgraph langchain_core langgraph.checkpoint.sqlite)
 
 # ── pretty helpers ─────────────────────────────────────────────────────────
 say()  { printf "  · %s\n" "$*"; }

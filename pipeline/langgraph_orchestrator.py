@@ -46,10 +46,12 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 try:
     from langgraph.graph import END, START, StateGraph
+    from langgraph.types import Command, interrupt
 except ImportError as exc:  # pragma: no cover - guarded at construction time
     raise ImportError(
         "langgraph is required for LangGraphOrchestrator. "
@@ -64,16 +66,23 @@ except ImportError:  # pragma: no cover - py<3.8
 from config import (
     ANSWER_MODEL,
     CAUSE_RANK_TOP_K,
+    HITL_CHECKPOINT_BACKEND,
+    HITL_DB_PATH,
+    HITL_RISK_THRESHOLD,
     MAX_CRITIC_RETRIES,
     RETRY_MODEL,
     TOP_K_RERANK,
     USE_CAUSE_RANKING,
+    USE_HITL,
 )
 from core.cause_ranker import format_for_prompt as format_causes_for_prompt
 from core.cause_ranker import rank_causes
+from core.criticality_classifier import classify as classify_risk
 from core.critic import critic_evaluate
 from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm_with_metrics
+from core.purchase_request import detect_and_enrich as detect_purchase_request
+from core.purchase_request import format_for_review as format_purchase_review
 from core.query_formatter import format_query
 from core.retrieval.hybrid_retriever import HybridRetriever
 
@@ -120,6 +129,13 @@ class GraphState(TypedDict, total=False):
     llm_metrics: Dict[str, Any]
     timings: Dict[str, float]
 
+    # ── HITL extensions (Phases A + B + C) ────────────────────────────────
+    risk: Dict[str, Any]                # Risk(score, drivers, …).to_dict()
+    purchase_request: Dict[str, Any]    # parsed PO request (Phase C)
+    human_decision: Dict[str, Any]      # {"approved", "approver", "comments", "edited_answer"}
+    pipeline_status: str                # "complete" | "rejected"
+    thread_id: str
+
 
 class LangGraphOrchestrator:
     """Drop-in replacement for ``core.orchestrator.Orchestrator``.
@@ -141,6 +157,12 @@ class LangGraphOrchestrator:
         self.retriever = HybridRetriever(documents, knowledge_graph, vector_retriever)
         self._indexed = False
         self._skip_vector_build = skip_vector_build
+
+        # HITL plumbing — checkpointer + per-thread metadata cache so the
+        # FastAPI server can list pending approvals without querying the
+        # checkpointer's internal schema.
+        self._checkpointer, self._checkpointer_kind = self._make_checkpointer()
+        self._pending: Dict[str, Dict[str, Any]] = {}
         self.graph = self._build_graph()
 
     # ─── Public API ──────────────────────────────────────────────────────
@@ -150,8 +172,13 @@ class LangGraphOrchestrator:
             self.retriever.build_indexes(skip_vector=self._skip_vector_build)
             self._indexed = True
 
-    def process_query(self, raw_query: str) -> Dict[str, Any]:
+    def process_query(
+        self,
+        raw_query: str,
+        thread_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         total_start = time.time()
+        thread_id = thread_id or f"thr_{uuid.uuid4().hex[:12]}"
         initial: GraphState = {
             "raw_query": raw_query,
             "attempts": [],
@@ -164,14 +191,89 @@ class LangGraphOrchestrator:
                 "model": ANSWER_MODEL,
             },
             "timings": {},
+            "thread_id": thread_id,
         }
 
-        final_state: GraphState = self.graph.invoke(initial)
+        config = {"configurable": {"thread_id": thread_id}}
+        final_state: GraphState = self.graph.invoke(initial, config=config)
+        return self._wrap_run(raw_query, thread_id, final_state, total_start)
+
+    def resume(
+        self,
+        thread_id: str,
+        decision: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Resume a paused graph (after a human responded to the interrupt)."""
+        if not USE_HITL:
+            raise RuntimeError("USE_HITL is disabled — there is nothing to resume.")
+        total_start = time.time()
+        config = {"configurable": {"thread_id": thread_id}}
+        final_state: GraphState = self.graph.invoke(
+            Command(resume=decision), config=config
+        )
+        # Use whatever raw_query was checkpointed.
+        raw_query = final_state.get("raw_query", "")
+        return self._wrap_run(raw_query, thread_id, final_state, total_start)
+
+    def pending_approvals(self) -> List[Dict[str, Any]]:
+        """Return the list of paused threads waiting for a human decision."""
+        return list(self._pending.values())
+
+    def get_pending(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        return self._pending.get(thread_id)
+
+    def _wrap_run(
+        self,
+        raw_query: str,
+        thread_id: str,
+        final_state: GraphState,
+        total_start: float,
+    ) -> Dict[str, Any]:
         total_ms = (time.time() - total_start) * 1000
         timings = dict(final_state.get("timings", {}))
-        timings["total_latency_ms"] = total_ms
+        timings["total_latency_ms"] = timings.get("total_latency_ms", 0.0) + total_ms
         final_state["timings"] = timings
-        return self._to_response(raw_query, final_state)
+
+        snapshot = self.graph.get_state({"configurable": {"thread_id": thread_id}})
+        interrupts = list(getattr(snapshot, "interrupts", []) or [])
+
+        if interrupts:
+            payload = self._extract_interrupt_payload(interrupts[0])
+            self._pending[thread_id] = {
+                "thread_id": thread_id,
+                "ts": time.time(),
+                "raw_query": raw_query or final_state.get("raw_query", ""),
+                "answer": final_state.get("answer", ""),
+                "evidence": final_state.get("evidence", []),
+                "risk": final_state.get("risk", {}),
+                "purchase_request": final_state.get("purchase_request"),
+                "interrupt_payload": payload,
+            }
+            response = self._to_response(raw_query, final_state)
+            response["pipeline_status"] = "awaiting_approval"
+            response["awaiting_approval"] = True
+            response["approval_thread_id"] = thread_id
+            response["risk"] = final_state.get("risk", {})
+            response["interrupt_payload"] = payload
+            return response
+
+        # Resolved — clean any stale pending entry.
+        self._pending.pop(thread_id, None)
+        response = self._to_response(raw_query, final_state)
+        response["pipeline_status"] = final_state.get("pipeline_status", "complete")
+        response["approval_thread_id"] = thread_id
+        response["risk"] = final_state.get("risk", {})
+        response["human_decision"] = final_state.get("human_decision")
+        response["awaiting_approval"] = False
+        return response
+
+    @staticmethod
+    def _extract_interrupt_payload(intr: Any) -> Dict[str, Any]:
+        # langgraph 1.x exposes `.value` on each Interrupt.
+        value = getattr(intr, "value", None)
+        if isinstance(value, dict):
+            return value
+        return {"value": value}
 
     # ─── Graph construction ──────────────────────────────────────────────
 
@@ -179,14 +281,18 @@ class LangGraphOrchestrator:
         g: StateGraph = StateGraph(GraphState)
 
         g.add_node("format", self._format_node)
+        g.add_node("detect_purchase", self._detect_purchase_node)
         g.add_node("retrieve", self._retrieve_node)
         g.add_node("rank_causes", self._rank_causes_node)
         g.add_node("generate", self._generate_node)
+        g.add_node("criticality_check", self._criticality_node)
+        g.add_node("human_approval", self._human_approval_node)
         g.add_node("critic", self._critic_node)
         g.add_node("retry", self._retry_node)
 
         g.add_edge(START, "format")
-        g.add_edge("format", "retrieve")
+        g.add_edge("format", "detect_purchase")
+        g.add_edge("detect_purchase", "retrieve")
         # Optional cause-ranking stage — short-circuited by the conditional
         # edge when USE_CAUSE_RANKING=false (it would otherwise idle-fire and
         # return immediately, but this keeps the graph picture cleaner).
@@ -196,7 +302,20 @@ class LangGraphOrchestrator:
             {"rank_causes": "rank_causes", "generate": "generate"},
         )
         g.add_edge("rank_causes", "generate")
-        g.add_edge("generate", "critic")
+        # HITL gate sits between answer generation and the critic so that any
+        # inline edits an approver makes still get critic-validated. When HITL
+        # is disabled the criticality node returns immediately with score=0.
+        g.add_edge("generate", "criticality_check")
+        g.add_conditional_edges(
+            "criticality_check",
+            self._route_after_criticality,
+            {"human_approval": "human_approval", "critic": "critic", "end": END},
+        )
+        g.add_conditional_edges(
+            "human_approval",
+            self._route_after_human,
+            {"critic": "critic", "end": END},
+        )
         g.add_conditional_edges(
             "critic",
             self._route_after_critic,
@@ -204,7 +323,44 @@ class LangGraphOrchestrator:
         )
         g.add_edge("retry", "critic")
 
-        return g.compile()
+        # Compile with a checkpointer so interrupts can pause and resume.
+        return g.compile(checkpointer=self._checkpointer)
+
+    # ─── Checkpointer ────────────────────────────────────────────────────
+
+    def _make_checkpointer(self):
+        """Return ``(checkpointer, kind_str)`` for the configured backend.
+
+        We always need *some* checkpointer because LangGraph's `interrupt()`
+        relies on one. In-memory is fine for dev / when HITL is off; SQLite
+        is the right choice for any deployment that should survive restarts.
+        """
+        if HITL_CHECKPOINT_BACKEND == "sqlite":
+            try:
+                from langgraph.checkpoint.sqlite import SqliteSaver
+                import sqlite3
+                HITL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                conn = sqlite3.connect(
+                    str(HITL_DB_PATH),
+                    check_same_thread=False,
+                    isolation_level=None,  # autocommit
+                )
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                logger.info("HITL: using SqliteSaver at %s", HITL_DB_PATH)
+                return SqliteSaver(conn), "sqlite"
+            except Exception as exc:  # pragma: no cover - import / fs error
+                logger.warning(
+                    "HITL: SqliteSaver unavailable (%s) — falling back to MemorySaver.",
+                    exc,
+                )
+        from langgraph.checkpoint.memory import MemorySaver
+        logger.info("HITL: using MemorySaver (in-memory checkpointer)")
+        return MemorySaver(), "memory"
+
+    @property
+    def checkpointer_kind(self) -> str:
+        return self._checkpointer_kind
 
     # ─── Nodes ───────────────────────────────────────────────────────────
 
@@ -214,6 +370,24 @@ class LangGraphOrchestrator:
         timings = dict(state.get("timings", {}))
         timings["query_formatting_ms"] = (time.time() - t0) * 1000
         return {"formatted": formatted, "timings": timings}
+
+    def _detect_purchase_node(self, state: GraphState) -> Dict[str, Any]:
+        """Phase C — detect a purchase-request intent and enrich from KG.
+
+        Returns ``purchase_request`` in the state when intent matches. Always
+        a no-op when ``USE_HITL`` is off (the field is consumed by the
+        criticality classifier, which itself is gated by ``USE_HITL``).
+        """
+        if not USE_HITL:
+            return {}
+        pr = detect_purchase_request(state["raw_query"], self.knowledge_graph)
+        if pr is None:
+            return {}
+        logger.info(
+            "purchase_request detected: part=%s qty=%s total=%s vendor=%s",
+            pr.get("part_id"), pr.get("quantity"), pr.get("total_usd"), pr.get("vendor"),
+        )
+        return {"purchase_request": pr}
 
     def _retrieve_node(self, state: GraphState) -> Dict[str, Any]:
         t0 = time.time()
@@ -276,6 +450,71 @@ class LangGraphOrchestrator:
             "llm_metrics": self._merge_metrics(state.get("llm_metrics", {}), result),
             "timings": timings,
         }
+
+    def _criticality_node(self, state: GraphState) -> Dict[str, Any]:
+        """Phase A — score the proposed answer; decide whether to escalate.
+
+        Always runs (even when ``USE_HITL`` is false) so callers always see a
+        ``risk`` field. The routing function downgrades a high score to
+        "auto-approve" when the global flag is off.
+        """
+        t0 = time.time()
+        if not USE_HITL:
+            risk = {"score": 0.0, "needs_human": False, "drivers": [],
+                    "summary": "USE_HITL=false — auto-approve"}
+        else:
+            formatted = state.get("formatted", {}) or {}
+            risk_obj = classify_risk(
+                query=state.get("raw_query", ""),
+                intent=formatted.get("intent"),
+                proposed_answer=state.get("answer", ""),
+                purchase_request=state.get("purchase_request"),
+            )
+            risk = risk_obj.to_dict()
+            logger.info("criticality: %s drivers=%s", risk["summary"], risk["drivers"])
+        timings = dict(state.get("timings", {}))
+        timings["criticality_ms"] = (time.time() - t0) * 1000
+        return {"risk": risk, "timings": timings}
+
+    def _human_approval_node(self, state: GraphState) -> Dict[str, Any]:
+        """Pause for a human decision and apply it on resume.
+
+        ``interrupt(payload)`` halts the graph; the checkpointer persists
+        the state. When ``Command(resume=decision)`` is sent in by
+        ``LangGraphOrchestrator.resume``, this call returns ``decision`` and
+        the graph continues.
+        """
+        risk = state.get("risk", {})
+        purchase = state.get("purchase_request")
+        payload = {
+            "kind": "human_approval",
+            "thread_id": state.get("thread_id"),
+            "summary": (
+                "This action requires supervisor approval before I proceed."
+            ),
+            "risk": risk,
+            "proposed_answer": state.get("answer", ""),
+            "raw_query": state.get("raw_query", ""),
+            "domain": "purchase_request" if purchase else "diagnostic",
+        }
+        if purchase:
+            payload["purchase_request_card"] = format_purchase_review(purchase)
+            payload["purchase_request"] = purchase
+
+        decision: Dict[str, Any] = interrupt(payload)
+        # `decision` shape: {"approved": bool, "approver": str,
+        #                    "comments": Optional[str], "edited_answer": Optional[str]}
+        if not isinstance(decision, dict):
+            decision = {"approved": False, "comments": "Malformed decision", "approver": "unknown"}
+
+        edited = decision.get("edited_answer")
+        approved = bool(decision.get("approved", False))
+        update: Dict[str, Any] = {"human_decision": decision}
+        if edited:
+            update["answer"] = edited
+        if not approved:
+            update["pipeline_status"] = "rejected"
+        return update
 
     def _critic_node(self, state: GraphState) -> Dict[str, Any]:
         t0 = time.time()
@@ -345,6 +584,24 @@ class LangGraphOrchestrator:
             return "end"
         return "retry"
 
+    def _route_after_criticality(self, state: GraphState) -> str:
+        """Send high-risk runs through ``human_approval`` (via ``interrupt``).
+
+        When ``USE_HITL`` is off the criticality node returns ``score=0`` so
+        we always route straight to the critic — preserving the prior
+        single-tenant behaviour.
+        """
+        if not USE_HITL:
+            return "critic"
+        risk = state.get("risk", {}) or {}
+        return "human_approval" if risk.get("needs_human") else "critic"
+
+    def _route_after_human(self, state: GraphState) -> str:
+        decision = state.get("human_decision") or {}
+        if not bool(decision.get("approved", False)):
+            return "end"  # rejected — short-circuit
+        return "critic"  # approved — re-run critic on the (possibly edited) answer
+
     # ─── Helpers ─────────────────────────────────────────────────────────
 
     @staticmethod
@@ -409,6 +666,10 @@ class LangGraphOrchestrator:
                 else "no filter",
             },
             "cause_ranking": cause_ranking,
+            "purchase_request": state.get("purchase_request"),
+            "risk": state.get("risk"),
+            "human_decision": state.get("human_decision"),
+            "pipeline_status": state.get("pipeline_status", "complete"),
             "critic": {
                 "final_verdict": final_verdict,
                 "attempts": attempts,
@@ -419,6 +680,7 @@ class LangGraphOrchestrator:
                 "query_formatting_ms": timings.get("query_formatting_ms", 0.0),
                 "retrieval_ms": timings.get("retrieval_ms", 0.0),
                 "cause_ranking_ms": timings.get("cause_ranking_ms", 0.0),
+                "criticality_ms": timings.get("criticality_ms", 0.0),
                 "generation_ms": timings.get("generation_ms", 0.0),
                 "retry_ms": timings.get("retry_ms", 0.0),
                 "prompt_tokens": llm.get("prompt_tokens", 0),

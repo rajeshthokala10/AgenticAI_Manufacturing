@@ -21,5 +21,8 @@ pydantic>=2.0.0
 # Pulls langchain-core as a transitive dep — we list it explicitly for clarity.
 langgraph>=0.2.0
 langchain-core>=0.3.0
+# Durable checkpointer for the HITL approval gate. Required when
+# HITL_CHECKPOINT_BACKEND=sqlite (the default for production).
+langgraph-checkpoint-sqlite>=2.0.0
 # Optional: ChromaDB-backed vector retriever (FAISS is the default).
 # chromadb>=0.4.0

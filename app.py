@@ -29,7 +29,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from config import LLM_MODEL, EMBEDDING_MODEL, llm_available
+from config import LLM_MODEL, EMBEDDING_MODEL, USE_HITL, USE_LANGGRAPH, llm_available
 from pipeline import ChatAgent, ChatState, ManufacturingPipeline
 from utils.metrics import (
     compute_accuracy_estimates, compute_cost_projection,
@@ -102,6 +102,23 @@ CSS = """
         padding:8px 12px; border-radius:4px; font-size:.95rem;
     }
     .chat-empty {
+        text-align:center; color:#9fa8da; padding:42px 12px;
+        border:1px dashed #c5cae9; border-radius:12px; margin:18px 0;
+    }
+
+    /* HITL approval panels */
+    .hitl-banner {
+        background:#fff3e0; border-left:5px solid #e65100;
+        padding:14px 18px; border-radius:6px; margin:12px 0;
+    }
+    .hitl-banner.rejected { background:#ffebee; border-left-color:#c62828; }
+    .hitl-banner.approved { background:#e8f5e9; border-left-color:#2e7d32; }
+    .hitl-driver {
+        display:inline-block; background:#fff8e1; color:#bf360c;
+        padding:2px 9px; border-radius:10px; font-size:.75rem;
+        margin:1px 4px 1px 0; border:1px solid #ffe0b2;
+    }
+    .hitl-empty {
         text-align:center; color:#9fa8da; padding:42px 12px;
         border:1px dashed #c5cae9; border-radius:12px; margin:18px 0;
     }
@@ -377,13 +394,42 @@ def _render_chat_turn(turn) -> None:
             st.markdown(turn.content)
         return
 
+    if turn.kind == "approval_pending":
+        with st.chat_message("assistant", avatar="🛑"):
+            st.markdown(
+                f'<div class="hitl-banner">{turn.content}</div>',
+                unsafe_allow_html=True,
+            )
+            risk = turn.meta.get("risk") or {}
+            if risk.get("drivers"):
+                chips = "".join(
+                    f'<span class="hitl-driver">{d}</span>'
+                    for d in risk["drivers"][:8]
+                )
+                st.markdown(chips, unsafe_allow_html=True)
+        return
+
     if turn.role == "user":
         with st.chat_message("user"):
             st.markdown(turn.content)
         return
 
     with st.chat_message("assistant"):
-        st.markdown(turn.content)
+        rejected = bool(turn.meta.get("rejected"))
+        if rejected:
+            st.markdown(f'<div class="hitl-banner rejected">{turn.content}</div>',
+                        unsafe_allow_html=True)
+        else:
+            if turn.meta.get("human_decision"):
+                st.markdown(
+                    '<div class="hitl-banner approved">✅ <b>Approved by reviewer</b> — '
+                    f'{turn.meta["human_decision"].get("approver", "unknown")}'
+                    + (f" — {turn.meta['human_decision'].get('comments')}"
+                       if turn.meta["human_decision"].get("comments") else "")
+                    + '</div>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown(turn.content)
         if turn.kind == "answer":
             _render_answer_meta(turn.meta)
 
@@ -431,6 +477,15 @@ def tab_chat(opts: dict) -> None:
 
     for turn in state.turns:
         _render_chat_turn(turn)
+
+    if USE_HITL and state.pending_approval_thread_id:
+        st.markdown(
+            f'<div class="hitl-banner">⏸️ <b>Workflow paused for approval.</b> '
+            f'Thread <code>{state.pending_approval_thread_id}</code> is waiting in the '
+            f'<b>📋 Approvals</b> tab. Resolve it there before sending the next message.</div>',
+            unsafe_allow_html=True,
+        )
+        return
 
     if state.awaiting_slot is not None:
         placeholder = f"Answer: {state.awaiting_slot.prompt}  (or type 'skip')"
@@ -611,6 +666,171 @@ def tab_knowledge_graph() -> None:
         render_graph_view(kg.get_subgraph_for_query(explore))
 
 
+def tab_approvals() -> None:
+    """HITL operations console — approve / reject paused workflows + audit log."""
+    st.markdown("### 📋 Approvals — Human-in-the-Loop")
+    if not USE_HITL:
+        st.info(
+            "HITL is **disabled** (`USE_HITL=false`). Set `USE_HITL=true` (and "
+            "`USE_LANGGRAPH=true`) in `.env` and restart the stack to enable the "
+            "approval gate."
+        )
+        return
+    if not USE_LANGGRAPH:
+        st.warning(
+            "HITL requires the LangGraph orchestrator. Set `USE_LANGGRAPH=true` "
+            "in `.env` and restart."
+        )
+        return
+
+    pending = pipe.pending_approvals()
+    state = _ensure_chat_state()
+
+    cols = st.columns([1, 1, 1, 4])
+    cols[0].metric("Pending", len(pending))
+    try:
+        from core.audit_log import get_default_log
+        audit_stats = get_default_log().stats()
+        cols[1].metric("Approved", audit_stats["approved"])
+        cols[2].metric("Rejected", audit_stats["rejected"])
+        cols[3].metric("Approval rate", f"{audit_stats['approval_rate'] * 100:.0f}%")
+    except Exception as exc:
+        cols[1].caption(f"Audit log unavailable: {exc}")
+
+    st.markdown("---")
+    if not pending:
+        st.markdown(
+            '<div class="hitl-empty">🎉 No pending approvals — the queue is clear.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for entry in pending:
+            _render_pending_approval(entry, state)
+
+    st.markdown("---")
+    st.markdown("### 📜 Recent decisions")
+    try:
+        from core.audit_log import get_default_log
+        recent = get_default_log().recent(limit=20)
+        if not recent:
+            st.caption("No decisions recorded yet.")
+        else:
+            df = pd.DataFrame([
+                {
+                    "When": e.to_dict()["ts_iso"],
+                    "Decision": "✅ approved" if e.decision == "approved" else "❌ rejected",
+                    "Domain": e.domain,
+                    "Approver": e.approver,
+                    "Risk": f"{e.risk_score:.2f}",
+                    "Drivers": ", ".join(e.drivers[:3]),
+                    "Query": (e.query or "")[:80],
+                    "Comments": (e.comments or "")[:80],
+                }
+                for e in recent
+            ])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+    except Exception as exc:
+        st.caption(f"Audit log unavailable: {exc}")
+
+
+def _render_pending_approval(entry: dict, state: ChatState) -> None:
+    thread_id = entry.get("thread_id", "?")
+    risk = entry.get("risk", {}) or {}
+    purchase = entry.get("purchase_request")
+    domain = "purchase_request" if purchase else "diagnostic"
+    score = float(risk.get("score", 0.0))
+
+    with st.container(border=True):
+        head_l, head_r = st.columns([5, 1])
+        head_l.markdown(
+            f"**Thread `{thread_id}`** · domain: `{domain}` · "
+            f"risk: **{score:.2f}** ({risk.get('summary', '')})"
+        )
+        head_r.caption(time.strftime("%H:%M:%S", time.localtime(entry.get("ts", time.time()))))
+
+        if risk.get("drivers"):
+            chips = "".join(f'<span class="hitl-driver">{d}</span>' for d in risk["drivers"][:8])
+            st.markdown(chips, unsafe_allow_html=True)
+
+        st.markdown("**User query**")
+        st.markdown(f"> {entry.get('raw_query', '')}")
+
+        if purchase:
+            from core.purchase_request import format_for_review
+            st.markdown(format_for_review(purchase))
+
+        st.markdown("**Proposed answer**")
+        proposed = entry.get("answer", "") or "_(empty)_"
+        edited = st.text_area(
+            "Edit before approving (optional)",
+            value=proposed,
+            height=180,
+            key=f"hitl_edit_{thread_id}",
+        )
+
+        c1, c2, c3 = st.columns([2, 2, 3])
+        approver = c3.text_input(
+            "Approver",
+            value=st.session_state.get(f"hitl_approver_{thread_id}", "demo@plant"),
+            key=f"hitl_approver_{thread_id}",
+        )
+        comments = c3.text_input(
+            "Comments (optional)",
+            key=f"hitl_comments_{thread_id}",
+        )
+
+        approve_clicked = c1.button(
+            "✅ Approve", key=f"hitl_approve_{thread_id}", type="primary",
+            use_container_width=True,
+        )
+        reject_clicked = c2.button(
+            "❌ Reject", key=f"hitl_reject_{thread_id}",
+            use_container_width=True,
+        )
+
+        if approve_clicked or reject_clicked:
+            decision = {
+                "approved": bool(approve_clicked),
+                "approver": approver or "unknown",
+                "comments": comments or None,
+                "edited_answer": (edited if edited.strip() and edited.strip() != proposed.strip() else None),
+            }
+            with st.spinner("Resuming workflow…"):
+                try:
+                    chat_agent.apply_resolution(state, thread_id, decision)
+                    _record_audit_from_streamlit(thread_id, entry, decision)
+                except Exception as exc:
+                    st.error(f"Resume failed: {exc}")
+                    return
+            st.success(
+                ("Approved" if approve_clicked else "Rejected") +
+                f" · thread `{thread_id}`. The answer has been delivered to the chat tab."
+            )
+            st.rerun()
+
+
+def _record_audit_from_streamlit(thread_id: str, entry: dict, decision: dict) -> None:
+    """Mirror the FastAPI audit-write so the in-process Streamlit demo also logs."""
+    try:
+        from core.audit_log import get_default_log
+        risk = entry.get("risk", {}) or {}
+        purchase = entry.get("purchase_request")
+        get_default_log().record(
+            thread_id=thread_id,
+            decision="approved" if decision.get("approved") else "rejected",
+            approver=decision.get("approver") or "unknown",
+            risk_score=float(risk.get("score", 0.0)),
+            drivers=risk.get("drivers", []),
+            domain="purchase_request" if purchase else "diagnostic",
+            query=entry.get("raw_query", ""),
+            proposed_answer=entry.get("answer", ""),
+            edited_answer=decision.get("edited_answer"),
+            comments=decision.get("comments"),
+        )
+    except Exception:
+        pass
+
+
 def tab_architecture() -> None:
     st.markdown("### 🔄 Unified Pipeline Flow")
     st.markdown("""
@@ -696,14 +916,16 @@ def main() -> None:
 
     opts = render_sidebar()
 
-    tabs = st.tabs([
+    tab_titles = [
         "💬 Chat",
         "🔍 Quick Search",
         "🩺 Diagnostic Copilot",
         "⚖️ Comparison",
         "🔗 Knowledge Graph",
+        "📋 Approvals",
         "🔄 Architecture & Cost",
-    ])
+    ]
+    tabs = st.tabs(tab_titles)
 
     with tabs[0]:
         tab_chat(opts)
@@ -716,6 +938,8 @@ def main() -> None:
     with tabs[4]:
         tab_knowledge_graph()
     with tabs[5]:
+        tab_approvals()
+    with tabs[6]:
         tab_architecture()
 
 

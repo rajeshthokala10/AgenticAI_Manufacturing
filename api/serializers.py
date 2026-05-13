@@ -84,6 +84,26 @@ def _serialize_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
         out["slot"] = meta["slot"]
         out["slot_required"] = bool(meta.get("required", False))
         out["slot_prompt"] = meta.get("prompt", "")
+
+    # HITL-related fields
+    if meta.get("risk"):
+        risk = meta["risk"]
+        out["risk"] = {
+            "score": float(risk.get("score", 0.0)),
+            "needs_human": bool(risk.get("needs_human", False)),
+            "drivers": list(risk.get("drivers", []) or [])[:8],
+            "summary": risk.get("summary", ""),
+        }
+    if meta.get("thread_id"):
+        out["thread_id"] = meta["thread_id"]
+    if meta.get("domain"):
+        out["domain"] = meta["domain"]
+    if meta.get("purchase_request"):
+        out["purchase_request"] = meta["purchase_request"]
+    if meta.get("human_decision"):
+        out["human_decision"] = meta["human_decision"]
+    if meta.get("rejected"):
+        out["rejected"] = bool(meta["rejected"])
     return out
 
 
@@ -101,4 +121,5 @@ def serialize_state(state: ChatState) -> Dict[str, Any]:
         "turns": [serialize_turn(t) for t in state.turns],
         "awaiting_slot": (state.awaiting_slot.name if state.awaiting_slot else None),
         "awaiting_prompt": (state.awaiting_slot.prompt if state.awaiting_slot else None),
+        "pending_approval_thread_id": state.pending_approval_thread_id,
     }
