@@ -51,6 +51,12 @@ CLASSIFY_MODEL: str = os.getenv("CLASSIFY_MODEL", "qwen2.5:3b")
 DIRECT_LLM_MODEL: str = os.getenv("DIRECT_LLM_MODEL", "gpt-4o-mini")
 CLASSICAL_RAG_MODEL: str = os.getenv("CLASSICAL_RAG_MODEL", "gpt-4o-mini")
 
+# Optional dedicated cause-ranking LLM (free local default via Ollama).
+# Used only when USE_CAUSE_RANKING=true *and* the query is a troubleshooting /
+# failure-analysis intent. See core/cause_ranker.py for details.
+CAUSE_RANK_MODEL: str = os.getenv("CAUSE_RANK_MODEL", "qwen2.5:3b")
+CAUSE_RANK_TOP_K: int = int(os.getenv("CAUSE_RANK_TOP_K", "5"))
+
 # ── Retrieval ───────────────────────────────────────────────────────────────
 TOP_K_RETRIEVAL: int = int(os.getenv("TOP_K_RETRIEVAL", "10"))
 TOP_K_RERANK: int = int(os.getenv("TOP_K_RERANK", "5"))
@@ -58,6 +64,23 @@ RRF_K: int = 60
 MAX_CRITIC_RETRIES: int = int(os.getenv("MAX_CRITIC_RETRIES", "2"))
 DEFAULT_TOP_K: int = 5
 DEFAULT_CONTEXT_WINDOW: int = 1
+
+# ── Orchestration ──────────────────────────────────────────────────────────
+# Switch between the legacy procedural Orchestrator (core/orchestrator.py) and
+# the LangGraph StateGraph-based orchestrator (pipeline/langgraph_orchestrator.py).
+# Both run the same retrieval → answer → critic → retry flow but the LangGraph
+# version makes the state transitions explicit and integrates with the
+# wider LangChain ecosystem (tracing, checkpointing, etc.).
+USE_LANGGRAPH: bool = os.getenv("USE_LANGGRAPH", "false").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+# Insert a dedicated cause-ranking LLM stage between retrieval and answer
+# generation. Active only for troubleshooting / failure-analysis intents — the
+# stage short-circuits to an empty result for unrelated queries.
+USE_CAUSE_RANKING: bool = os.getenv("USE_CAUSE_RANKING", "false").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
 # ── Chunking ────────────────────────────────────────────────────────────────
 CHUNK_SIZE: int = 512
@@ -79,7 +102,7 @@ FAISS_NPROBE_CAP: int = 10
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".pdf", ".txt", ".xlsx", ".xls")
 
 # ── Vector store (legacy ChromaDB path — only used if explicitly enabled) ───
-CHROMA_COLLECTION: str = "manufacturing_docs"
+CHROMAb_COLLECTION: str = "manufacturing_docs"
 CHROMA_DIR: str = str(PROCESSED_DIR / "chromadb")
 
 # ── Domain ontology (used by KG builder) ────────────────────────────────────

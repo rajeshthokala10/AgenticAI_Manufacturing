@@ -120,8 +120,10 @@ def draw_diagram(c):
     c.drawString(
         36,
         page_h - 54,
-        "Multi-turn chat \u2022 Hybrid retrieval (BM25 + FAISS + Knowledge Graph) "
-        "\u2022 Critic-validated tiered LLMs (OpenAI + Ollama)",
+        "Multi-turn chat \u2022 LangGraph-optional orchestration \u2022 "
+        "Hybrid retrieval (BM25 + FAISS + KG) \u2022 "
+        "Optional cause-ranker \u2022 "
+        "Critic-validated tiered LLMs (OpenAI + Ollama)",
     )
 
     y_clients = page_h - 130
@@ -211,11 +213,11 @@ def draw_diagram(c):
         y_orch,
         220,
         82,
-        "HybridOrchestrator  (core/orchestrator.py)",
+        "HybridOrchestrator   (procedural · default)",
         [
-            "Coordinates retrieval + KG + LLM",
+            "core/orchestrator.py",
             "Runs critic loop (MAX_CRITIC_RETRIES)",
-            "Emits QueryResponse",
+            "Opt-in: LangGraph StateGraph (USE_LANGGRAPH=true)",
         ],
         ORCH,
     )
@@ -258,11 +260,12 @@ def draw_diagram(c):
         550,
         y_mid,
         220,
-        82,
+        92,
         "Tiered LLMs  (core/llm_client.py)",
         [
             "gpt-4o          → answer / retry    (OpenAI)",
-            "qwen2.5:3b   → critic / classifier  (Ollama)",
+            "qwen2.5:3b   → critic + classifier  (Ollama)",
+            "qwen2.5:3b   → cause-ranker  (opt-in, intent-gated)",
             "gpt-4o-mini → comparison baselines",
         ],
         LLM,

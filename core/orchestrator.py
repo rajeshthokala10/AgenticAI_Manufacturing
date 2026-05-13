@@ -1,12 +1,24 @@
 import time
 from typing import Dict, List, Optional
 
-from config import MAX_CRITIC_RETRIES, TOP_K_RERANK, ANSWER_MODEL, RETRY_MODEL
-from core.query_formatter import format_query
-from core.knowledge_graph import KnowledgeGraph
-from core.retrieval.hybrid_retriever import HybridRetriever
+from config import (
+    ANSWER_MODEL,
+    CAUSE_RANK_TOP_K,
+    MAX_CRITIC_RETRIES,
+    RETRY_MODEL,
+    TOP_K_RERANK,
+    USE_CAUSE_RANKING,
+)
+from core.cause_ranker import (
+    _intent_is_troubleshooting,
+    format_for_prompt as format_causes_for_prompt,
+    rank_causes,
+)
 from core.critic import critic_evaluate
+from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm, call_llm_with_metrics
+from core.query_formatter import format_query
+from core.retrieval.hybrid_retriever import HybridRetriever
 
 
 ANSWER_SYSTEM_PROMPT = """You are a manufacturing diagnostic copilot. You provide evidence-grounded answers
@@ -70,15 +82,31 @@ class Orchestrator:
         allow_list = self.knowledge_graph.get_allow_list(raw_query)
 
         evidence_text = self._format_evidence(retrieved_chunks)
-        user_prompt = f"""QUERY: {formatted['expanded']}
 
-INTENT: {formatted['intent']}
-ENTITIES: {formatted['entities']}
+        # ─── Optional cause-ranking LLM stage ──────────────────────────────
+        cause_ranking: Optional[Dict] = None
+        cause_ranking_ms = 0.0
+        cause_block = ""
+        if USE_CAUSE_RANKING and _intent_is_troubleshooting(formatted.get("intent")):
+            cr_start = time.time()
+            cause_ranking = rank_causes(
+                query=raw_query,
+                intent=formatted.get("intent"),
+                evidence_chunks=retrieved_chunks,
+                graph_context=graph_info,
+                top_k=CAUSE_RANK_TOP_K,
+            )
+            cause_ranking_ms = (time.time() - cr_start) * 1000
+            cause_block = format_causes_for_prompt(cause_ranking.get("candidates", []))
 
-EVIDENCE CHUNKS:
-{evidence_text}
-
-Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."""
+        user_prompt = (
+            f"QUERY: {formatted['expanded']}\n\n"
+            f"INTENT: {formatted['intent']}\n"
+            f"ENTITIES: {formatted['entities']}\n\n"
+            + (cause_block + "\n\n" if cause_block else "")
+            + f"EVIDENCE CHUNKS:\n{evidence_text}\n\n"
+            + "Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."
+        )
 
         gen_start = time.time()
         llm_result = call_llm_with_metrics(
@@ -87,6 +115,14 @@ Provide a comprehensive, evidence-grounded answer. Cite sources for every claim.
             model=ANSWER_MODEL,
         )
         gen_time = (time.time() - gen_start) * 1000
+
+        # Fold the cause-ranker's token spend into the running total so the
+        # final metrics reflect the true cost of the query.
+        if cause_ranking:
+            llm_result["prompt_tokens"] += cause_ranking.get("prompt_tokens", 0)
+            llm_result["completion_tokens"] += cause_ranking.get("completion_tokens", 0)
+            llm_result["total_tokens"] += cause_ranking.get("total_tokens", 0)
+            llm_result["cost_estimate"] += cause_ranking.get("cost_estimate", 0.0)
 
         answer = llm_result["response"]
         critic_results = []
@@ -147,6 +183,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
                 "total_docs": len(self.documents),
                 "filter_ratio": f"{len(allow_list)}/{len(self.documents)}" if allow_list else "no filter",
             },
+            "cause_ranking": cause_ranking,
             "critic": {
                 "final_verdict": final_verdict,
                 "attempts": critic_results,
@@ -156,6 +193,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
                 "total_latency_ms": total_time,
                 "query_formatting_ms": fmt_time,
                 "retrieval_ms": ret_time,
+                "cause_ranking_ms": cause_ranking_ms,
                 "generation_ms": gen_time,
                 "prompt_tokens": llm_result["prompt_tokens"],
                 "completion_tokens": llm_result["completion_tokens"],

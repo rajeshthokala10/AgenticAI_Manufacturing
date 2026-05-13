@@ -17,5 +17,9 @@ reportlab>=4.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
+# LangGraph orchestration (state-graph wrapper over retrieval + critic loop).
+# Pulls langchain-core as a transitive dep — we list it explicitly for clarity.
+langgraph>=0.2.0
+langchain-core>=0.3.0
 # Optional: ChromaDB-backed vector retriever (FAISS is the default).
 # chromadb>=0.4.0

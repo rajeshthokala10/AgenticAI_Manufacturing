@@ -32,6 +32,15 @@ if not logger.handlers:
 from .unified_pipeline import ManufacturingPipeline, PipelineMode, PipelineResult
 from .chat_agent import ChatAgent, ChatState, ChatTurn
 
+# Optional LangGraph orchestrator — only available when ``langgraph`` is installed.
+try:
+    from .langgraph_orchestrator import LangGraphOrchestrator  # noqa: F401
+
+    _LANGGRAPH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    LangGraphOrchestrator = None  # type: ignore[assignment]
+    _LANGGRAPH_AVAILABLE = False
+
 __all__ = [
     "ManufacturingPipeline",
     "PipelineMode",
@@ -39,5 +48,6 @@ __all__ = [
     "ChatAgent",
     "ChatState",
     "ChatTurn",
+    "LangGraphOrchestrator",
     "logger",
 ]

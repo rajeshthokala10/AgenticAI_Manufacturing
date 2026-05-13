@@ -109,6 +109,7 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 | Web UI (primary)   | **Next.js 14** (App Router, TypeScript) + **Tailwind CSS** + `react-markdown` |
 | Analytics UI       | Streamlit + Plotly (6 tabs)                                      |
 | HTTP API           | **FastAPI** + **uvicorn** + Pydantic                             |
+| Orchestration      | **LangGraph** `StateGraph` (opt-in) + procedural fallback — see [Critic Loop State Machine](#critic-loop-state-machine) |
 | LLMs               | **OpenAI** `gpt-4o` (answer/retry) + `gpt-4o-mini` (baselines) — and **Ollama** `qwen2.5:3b` (critic + classifier).  See [Models & LLM Routing](#models--llm-routing). |
 | Vector store       | FAISS (default) — ChromaDB optional                              |
 | Sparse retrieval   | `rank-bm25` _(pure-Python fallback bundled in-tree)_             |
@@ -708,6 +709,138 @@ ISSUES: <list or "None">
 SUGGESTION: <how to fix on retry>
 ```
 
+### LangGraph orchestration (opt-in)
+
+The same critic loop is also available as an explicit **LangGraph `StateGraph`**
+in `pipeline/langgraph_orchestrator.py`. Set `USE_LANGGRAPH=true` in `.env`
+and `ManufacturingPipeline` will route every diagnostic query through the
+graph below instead of the procedural `core.orchestrator.Orchestrator`. The
+response shape is identical (the only visible difference is
+`response["pipeline"] == "hybrid_graphrag_langgraph"`), so the Streamlit /
+Next.js / FastAPI layers don't need any changes.
+
+```mermaid
+flowchart LR
+    S([START]) --> F[format<br/>format_query]
+    F --> R[retrieve<br/>HybridRetriever + KG]
+    R --> G[generate<br/>call_llm ANSWER_MODEL]
+    G --> C{critic<br/>critic_evaluate}
+    C -- PASS --> E([END])
+    C -- FAIL & attempts &lt; MAX --> RT[retry<br/>call_llm RETRY_MODEL]
+    RT --> C
+    C -- FAIL & attempts == MAX --> E
+```
+
+| Node       | What it does                                                            | Calls                                  |
+| ---------- | ----------------------------------------------------------------------- | -------------------------------------- |
+| `format`   | Intent + entity extraction, query expansion                             | `core.query_formatter.format_query`    |
+| `retrieve` | Hybrid BM25 + FAISS + KG retrieval and allow-list                       | `HybridRetriever.retrieve` + `KnowledgeGraph` |
+| `generate` | First-draft answer                                                      | `call_llm_with_metrics(ANSWER_MODEL)`  |
+| `critic`   | Grounding / completeness / safety check; increments `attempt_idx`       | `critic_evaluate(CRITIC_MODEL)`        |
+| `retry`    | Regenerate using the critic's feedback                                  | `call_llm_with_metrics(RETRY_MODEL)`   |
+
+**Why LangGraph instead of the procedural loop?**
+
+- Explicit, inspectable state (`GraphState` TypedDict) per turn — easier to debug or
+  visualise (e.g. plug into LangSmith for traces).
+- Single place to add new nodes — _planner_, _self-RAG re-retrieval_,
+  _human-in-the-loop approval_, etc. — without rewriting the control flow.
+- Ecosystem fit: any future LangChain tool/agent can be dropped in as a node.
+
+**Why opt-in?**
+
+- The procedural orchestrator has zero non-stdlib graph deps and is the
+  battle-tested default.
+- Without `langgraph` installed (or with `USE_LANGGRAPH=false`), the pipeline
+  falls back automatically and logs `Diagnostic engine: procedural Orchestrator`.
+- With `USE_LANGGRAPH=true` and `langgraph` installed, you'll see
+  `Diagnostic engine: LangGraph (USE_LANGGRAPH=true)` at startup and
+  `pipe.stats["orchestrator_engine"] == "langgraph"` at runtime.
+
+**Enable it:**
+
+```bash
+echo "USE_LANGGRAPH=true" >> .env
+./run.sh        # langgraph + langchain-core are installed by run.sh automatically
+```
+
+### Cause-ranking LLM stage (optional)
+
+For troubleshooting / failure-analysis queries you can insert a **dedicated
+cause-ranking LLM** between retrieval and answer generation. The stage is
+implemented in `core/cause_ranker.py` and is integrated into both the
+procedural orchestrator and the LangGraph orchestrator — enabling it just
+requires:
+
+```bash
+echo "USE_CAUSE_RANKING=true"   >> .env
+echo "CAUSE_RANK_MODEL=qwen2.5:3b" >> .env   # default: free local Ollama model
+echo "CAUSE_RANK_TOP_K=5"          >> .env   # default: top 5 causes
+```
+
+#### What it does
+
+1. After the hybrid retriever returns the top-k chunks and the KG returns the
+   query subgraph, the ranker collects:
+   * KG nodes typed `Cause` / `FailureMode` from that subgraph, and
+   * The retrieved evidence chunks (truncated to keep prompt size bounded).
+2. It calls `CAUSE_RANK_MODEL` (default `qwen2.5:3b` on Ollama — free) with a
+   strict-JSON prompt asking for a ranked list of root causes, each with a
+   `score`, `rationale`, and the `evidence_chunk_ids` it relies on.
+3. The parsed candidates are formatted into a `LIKELY ROOT CAUSES …` block
+   that is **prepended to the answer LLM's prompt** so the final
+   "Root Cause candidates" section in the diagnostic answer is anchored on
+   explicitly scored, citation-tagged candidates rather than implicit ranking.
+
+#### Intent gating
+
+The stage is *intent-gated*: it short-circuits to an empty result for any
+query whose intent doesn't match troubleshooting / failure-analysis triggers
+(`troubleshoot`, `diagnos`, `root_cause`, `failure`, `fault`, `repair`,
+`fix`, `incident`, `broken`, `alarm`). So the cost is paid only on queries
+that actually need it — a "what's the spec for bolt M8?" query will skip the
+node entirely and the prompt enrichment step.
+
+#### Where it appears in the LangGraph topology
+
+```mermaid
+flowchart LR
+    R[retrieve] -->|USE_CAUSE_RANKING=true<br/>+ troubleshooting intent| RC[rank_causes<br/>CAUSE_RANK_MODEL]
+    R -->|else| G[generate<br/>ANSWER_MODEL]
+    RC --> G
+```
+
+The procedural orchestrator follows the same logic via the same
+`rank_causes()` function, so behaviour is identical regardless of the
+`USE_LANGGRAPH` setting.
+
+#### Response shape
+
+When the stage runs, the response gains a `cause_ranking` field alongside
+the existing `evidence` / `critic` blocks:
+
+```json
+{
+  "answer": "…",
+  "cause_ranking": {
+    "candidates": [
+      { "cause": "Bearing wear", "score": 0.85, "rationale": "...",
+        "evidence_chunk_ids": ["pump_manual.pdf:c12"] },
+      { "cause": "Coupling misalignment", "score": 0.42, "rationale": "...",
+        "evidence_chunk_ids": ["maint_log.xlsx:c5"] }
+    ],
+    "model": "qwen2.5:3b",
+    "total_tokens": 280,
+    "cost_estimate": 0.0
+  },
+  "metrics": { "cause_ranking_ms": 187.4, "..." }
+}
+```
+
+When the stage is skipped, `cause_ranking` is either `null` or contains a
+`"skipped"` reason (`"intent_not_troubleshooting"` / `"no_evidence"`) along
+with zero token usage.
+
 ---
 
 ## Models & LLM Routing
@@ -723,6 +856,7 @@ so token spend stays on the critical path.
 | `ANSWER_MODEL`          | `gpt-4o`             | **OpenAI** (cloud)       | `core/orchestrator.py` — first-pass diagnostic answer  | Strong reasoning + citations |
 | `RETRY_MODEL`           | `gpt-4o`             | **OpenAI** (cloud)       | `core/orchestrator.py` — regenerate after critic FAIL  | Used at most `MAX_CRITIC_RETRIES` times |
 | `CRITIC_MODEL`          | `qwen2.5:3b`         | **Ollama** (local)       | `core/critic.py` — grades grounding / safety / citations | Free, ~50ms per evaluation |
+| `CAUSE_RANK_MODEL`      | `qwen2.5:3b`         | **Ollama** (local)       | `core/cause_ranker.py` — ranks root-cause candidates    | Optional; enable with `USE_CAUSE_RANKING=true`. Intent-gated to troubleshooting queries. See [Cause-Ranking LLM stage](#cause-ranking-llm-stage-optional). |
 | `CLASSIFY_MODEL`        | `qwen2.5:3b`         | **Ollama** (local)       | LLM-assisted intent classification (fallback path)     | Regex classifier handles most queries first |
 | `DIRECT_LLM_MODEL`      | `gpt-4o-mini`        | **OpenAI** (cloud)       | `comparison/direct_llm.py` — no-retrieval baseline     | For Comparison tab only |
 | `CLASSICAL_RAG_MODEL`   | `gpt-4o-mini`        | **OpenAI** (cloud)       | `comparison/classical_rag.py` — FAISS-only baseline    | For Comparison tab only |
@@ -736,7 +870,7 @@ All values come from `config.py` defaults and can be overridden in `.env`.
 | Mode                  | Models invoked per query                                                                 |
 | --------------------- | ---------------------------------------------------------------------------------------- |
 | **Quick Search**      | **none** — pure FAISS + embeddings, fully offline                                        |
-| **Diagnostic Copilot**| `gpt-4o` (answer) → `qwen2.5:3b` (critic) → optional `gpt-4o` (retry, up to `MAX_CRITIC_RETRIES`) |
+| **Diagnostic Copilot**| optional `qwen2.5:3b` (cause-ranker) → `gpt-4o` (answer) → `qwen2.5:3b` (critic) → optional `gpt-4o` (retry, up to `MAX_CRITIC_RETRIES`) |
 | **Chat (default)**    | Same as Diagnostic, with `qwen2.5:3b` optionally classifying intent ahead of retrieval   |
 | **Classical RAG**     | `gpt-4o-mini`                                                                            |
 | **Direct LLM**        | `gpt-4o-mini`                                                                            |
@@ -1005,6 +1139,10 @@ cp .env.example .env
 | `TOP_K_RETRIEVAL`      | `10`                          | Candidates from each retriever                       |
 | `TOP_K_RERANK`         | `5`                           | Final evidence chunks shown to the LLM               |
 | `MAX_CRITIC_RETRIES`   | `2`                           | Max regeneration attempts after a failed critic check |
+| `USE_LANGGRAPH`        | `false`                       | Route diagnostic queries through `pipeline/langgraph_orchestrator.py` (LangGraph `StateGraph`) instead of the procedural orchestrator |
+| `USE_CAUSE_RANKING`    | `false`                       | Insert a dedicated cause-ranking LLM stage between retrieval and answer generation (intent-gated to troubleshooting queries) |
+| `CAUSE_RANK_MODEL`     | `qwen2.5:3b`                  | Model used by the cause-ranker (defaults to free local Ollama; set to e.g. `gpt-4o-mini` for cloud) |
+| `CAUSE_RANK_TOP_K`     | `5`                           | Maximum number of ranked root-cause candidates returned                                            |
 | `NEXT_PUBLIC_API_ORIGIN` | `http://localhost:8000`     | Where the Next.js web UI sends `/api/*` requests     |
 | `API_PORT` / `STREAMLIT_PORT` / `WEB_PORT` | `8000` / `8501` / `3000` | Port overrides honoured by `run.sh` / `stop.sh` |
 | `SKIP_WEB` / `SKIP_STREAMLIT` | _(unset)_              | Set to `1` to skip a service when running `run.sh`   |

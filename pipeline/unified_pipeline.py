@@ -45,6 +45,7 @@ class PipelineResult:
     clarification: Optional[Any] = None
     correction: Optional[Any] = None
     graph_context: Optional[Dict] = None
+    cause_ranking: Optional[Dict] = None
     critic: Optional[Dict] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
     formatted_output: str = ""
@@ -56,6 +57,7 @@ class PipelineResult:
             "answer": self.answer,
             "evidence": self.evidence,
             "graph_context": self.graph_context,
+            "cause_ranking": self.cause_ranking,
             "critic": self.critic,
             "metrics": self.metrics,
             "formatted_output": self.formatted_output,
@@ -110,6 +112,7 @@ class ManufacturingPipeline:
         self.faiss_retriever = None
         self._ready = False
         self._llm_enabled = False
+        self._orchestrator_engine: str = "procedural"  # or "langgraph"
 
     # ─── Build ───────────────────────────────────────────────────────────
 
@@ -151,14 +154,10 @@ class ManufacturingPipeline:
         self._llm_enabled = enable_llm and llm_available()
 
         if self._llm_enabled:
-            from core.orchestrator import Orchestrator
             from comparison.classical_rag import ClassicalRAG
+            from config import USE_LANGGRAPH
 
-            self.orchestrator = Orchestrator(
-                self.documents, self.kg,
-                vector_retriever=self.faiss_retriever,
-                skip_vector_build=True,
-            )
+            self.orchestrator = self._build_orchestrator(USE_LANGGRAPH)
             self.orchestrator.initialize()
 
             self.classical_rag = ClassicalRAG(
@@ -195,6 +194,43 @@ class ManufacturingPipeline:
         self.documents = chunks_to_core_docs(self.embedding_pipeline.chunks)
         logger.info("Materialized %d core documents", len(self.documents))
 
+    def _build_orchestrator(self, use_langgraph: bool):
+        """Construct the diagnostic orchestrator.
+
+        Prefers the LangGraph engine when ``USE_LANGGRAPH=true`` and falls back
+        to the procedural ``core.orchestrator.Orchestrator`` if langgraph is
+        not installed or the env flag is off.
+        """
+        from core.orchestrator import Orchestrator as ProceduralOrchestrator
+
+        if use_langgraph:
+            try:
+                from pipeline.langgraph_orchestrator import LangGraphOrchestrator
+
+                logger.info("Diagnostic engine: LangGraph (USE_LANGGRAPH=true)")
+                self._orchestrator_engine = "langgraph"
+                return LangGraphOrchestrator(
+                    self.documents,
+                    self.kg,
+                    vector_retriever=self.faiss_retriever,
+                    skip_vector_build=True,
+                )
+            except ImportError as exc:
+                logger.warning(
+                    "USE_LANGGRAPH=true but langgraph is not installed (%s); "
+                    "falling back to the procedural orchestrator.",
+                    exc,
+                )
+
+        logger.info("Diagnostic engine: procedural Orchestrator")
+        self._orchestrator_engine = "procedural"
+        return ProceduralOrchestrator(
+            self.documents,
+            self.kg,
+            vector_retriever=self.faiss_retriever,
+            skip_vector_build=True,
+        )
+
     def _stats(self) -> Dict[str, Any]:
         kg_stats = self.kg.get_stats() if self.kg is not None else {}
         return {
@@ -206,6 +242,7 @@ class ManufacturingPipeline:
             "kg_entity_types": kg_stats.get("entity_types", {}),
             "kg_relation_types": kg_stats.get("relation_types", {}),
             "llm_enabled": self._llm_enabled,
+            "orchestrator_engine": self._orchestrator_engine,
             "input_dirs": [str(d) for d in self.input_dirs],
         }
 
@@ -279,6 +316,7 @@ class ManufacturingPipeline:
             clarification=clarification,
             correction=correction,
             graph_context=result.get("graph_context"),
+            cause_ranking=result.get("cause_ranking"),
             critic=result.get("critic"),
             metrics=result.get("metrics", {}),
             formatted_output="",
