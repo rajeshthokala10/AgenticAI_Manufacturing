@@ -139,6 +139,12 @@ See `requirements.txt` (Python) and `web/package.json` (Node) for exact versions
 > read-set matrix, ingest-time tagging, ContextVar-scoped retriever filter, and the operator
 > vs plant-manager evidence delta). Rebuild any time with
 > `.venv/bin/python system_design/generate_diagram.py`.
+>
+> **Business pitch deck:** `system_design/manufacturing_pitch_deck.pdf` is the customer-facing
+> 12-slide briefing for plant leadership — problem, solution, architecture, maker-checker +
+> ACL safety story, plant data sources, **agentic extensibility to ERP / SAP / MES / Database**,
+> use cases, ROI, and a 10-week pilot plan. 16:9 landscape, regenerable from
+> `system_design/generate_pitch_deck.py`.
 
 ## High-Level Architecture
 
