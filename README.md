@@ -52,14 +52,15 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 11. [Critic Loop State Machine](#critic-loop-state-machine)
 12. [Models & LLM Routing](#models--llm-routing)
 13. [Human-in-the-Loop (HITL) Approval Gate](#human-in-the-loop-hitl-approval-gate)
-14. [Directory Structure](#directory-structure)
-15. [Setup & Installation](#setup--installation)
-16. [Running the Application](#running-the-application)
-17. [Configuration](#configuration)
-18. [Sample Queries](#sample-queries)
-19. [Pipeline Comparison](#pipeline-comparison)
-20. [Troubleshooting](#troubleshooting)
-21. [What Changed in the Unification](#what-changed-in-the-unification)
+14. [Advanced Patterns](#advanced-patterns) — _rerank · semantic cache · parallel retrieval · guardrails · ERP/MES tools · offline eval_
+15. [Directory Structure](#directory-structure)
+16. [Setup & Installation](#setup--installation)
+17. [Running the Application](#running-the-application)
+18. [Configuration](#configuration)
+19. [Sample Queries](#sample-queries)
+20. [Pipeline Comparison](#pipeline-comparison)
+21. [Troubleshooting](#troubleshooting)
+22. [What Changed in the Unification](#what-changed-in-the-unification)
 
 ---
 
@@ -103,6 +104,28 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
   state across restarts; `📋 Approvals` Streamlit tab and `/api/approvals/*` REST endpoints let a
   reviewer approve / reject / edit; every decision is appended to a SQLite audit log
   (`core/audit_log.py`).
+- **Async parallel retrieval** — `USE_PARALLEL_RETRIEVAL=true` (default) fans BM25 / FAISS / Graph
+  retrievers out across a thread pool; ~30 % latency cut on the diagnostic path.
+- **Cross-encoder reranker** — opt-in (`USE_RERANKER=true`) second stage that re-orders the
+  RRF-fused pool with a cross-encoder (`BAAI/bge-reranker-base` by default) and blends the score
+  with the lexical/graph RRF — 5-15 % quality lift on noisy corpora, graceful-degrades to the
+  unranked order on any load failure.
+- **Semantic cache** — opt-in (`USE_SEMANTIC_CACHE=true`) in-memory cache keyed by query-embedding
+  cosine similarity (default threshold 0.97). On a hit the entire LLM stack is skipped; the cache
+  refuses to store paused/rejected runs so HITL is never bypassed.
+- **Deterministic guardrails** — `USE_GUARDRAILS=true` (default) layers a citation-required +
+  safety-regex check before the LLM critic. Hard-blocks unsafe answers (LOTO bypass, energised
+  electrical work, …), flags fabricated citations, and feeds soft violations back into the existing
+  retry loop. See `core/guardrails.py`.
+- **ERP / MES / SAP / DB tool-calling** — opt-in (`USE_TOOLS=true`) planner + tool registry
+  (`core/tools/`). Read-only tools (`get_inventory`, `get_work_order_status`) run inline and their
+  outputs feed the answer LLM; write tools (`create_purchase_order`, `create_work_order`) are
+  paused at the **same** HITL approval gate before they touch the ERP. Ships a `MockToolBackend`
+  for the demo; subclass `ToolBackend` to wire SAP / Oracle / Maximo.
+- **RAGAS-style offline eval harness** — `comparison/eval/` ships a golden Q&A set + deterministic
+  metrics (faithfulness, answer relevancy, context precision, citation accuracy, guardrail pass
+  rate). One command (`python -m comparison.eval.run`) regrades the three pipelines and writes a
+  Markdown + JSON report.
 - **Side-by-side benchmarking** — Direct LLM vs Classical RAG vs Hybrid GraphRAG with latency,
   tokens, cost, citations, and critic verdicts.
 - **Run-out-of-the-box** — sample documents and a prebuilt FAISS index ship in the repo.
@@ -120,8 +143,13 @@ slots are missing, and then runs **Diagnostic** mode (or **Quick Search** as the
 | LLMs               | **OpenAI** `gpt-4o` (answer/retry) + `gpt-4o-mini` (baselines) — and **Ollama** `qwen2.5:3b` (critic + classifier).  See [Models & LLM Routing](#models--llm-routing). |
 | Vector store       | FAISS (default) — ChromaDB optional                              |
 | Sparse retrieval   | `rank-bm25` _(pure-Python fallback bundled in-tree)_             |
+| Reranker (opt-in)  | Cross-encoder via `sentence-transformers` (`BAAI/bge-reranker-base`) |
 | Knowledge graph    | NetworkX (DiGraph)                                               |
 | Embeddings         | Sentence-Transformers `all-MiniLM-L6-v2` (384-dim)               |
+| Cache              | In-process semantic cache (cosine over query embedding, LRU + TTL) |
+| Guardrails         | Pure-Python regex post-processor (`core/guardrails.py`)          |
+| Tools / Integrations | `core/tools/` registry — read tools inline, write tools via HITL gate |
+| Eval               | `comparison/eval/` RAGAS-style harness (golden set + metrics)    |
 | Data ingestion     | `pdfplumber`, `openpyxl`, `pandas`                               |
 | Orchestration      | `run.sh` / `stop.sh` / `status.sh` (PID + log management in `.run/`) |
 | Language           | Python 3.10+, Node.js 18+                                        |
@@ -131,14 +159,15 @@ See `requirements.txt` (Python) and `web/package.json` (Node) for exact versions
 ---
 
 > **Architect-grade diagram set:** `system_design/system_architecture.pdf` is the canonical
-> reference. Seven landscape pages, regenerable from `system_design/generate_diagram.py`:
+> reference. **Eight** landscape pages, regenerable from `system_design/generate_diagram.py`:
 > top-level architecture · LangGraph diagnostic flow · cost & latency breakdown · HITL gate ·
 > **low-level component sequence** (every step of a $5,000 PO from operator keystroke to audit
 > row) · **component interaction contracts** (every cross-process edge with payload, auth and
 > failure modes) · **role-based knowledge-base ACLs** (three-tier classification, role × tier
 > read-set matrix, ingest-time tagging, ContextVar-scoped retriever filter, and the operator
-> vs plant-manager evidence delta). Rebuild any time with
-> `.venv/bin/python system_design/generate_diagram.py`.
+> vs plant-manager evidence delta) · **advanced patterns** (cross-encoder reranker, semantic
+> cache, parallel retrieval, deterministic guardrails, ERP/MES tool-calling, RAGAS-style eval
+> harness). Rebuild any time with `.venv/bin/python system_design/generate_diagram.py`.
 >
 > **Business pitch deck:** `system_design/manufacturing_pitch_deck.pdf` is the customer-facing
 > 12-slide briefing for plant leadership — problem, solution, architecture, maker-checker +
@@ -171,16 +200,30 @@ flowchart LR
         CL["ClarifierAgent<br/>intent · entities · slots"]
         QC["QueryCorrector<br/>spelling · acronyms · synonyms"]
         QFMT["query_formatter<br/>(legacy, used by orchestrator)"]
+        SC["SemanticCache<br/>(USE_SEMANTIC_CACHE)<br/>cosine-sim hit short-circuit"]
     end
 
     subgraph RETR["Hybrid Retrieval (core/retrieval/)"]
-        HR["HybridRetriever<br/>RRF + edge priors"]
+        HR["HybridRetriever<br/>parallel fan-out + RRF + edge priors"]
+        RR["CrossEncoder Reranker<br/>(USE_RERANKER)<br/>bge-reranker-base"]
+    end
+
+    subgraph TOOLS["Tools (ERP / MES / SAP / DB)"]
+        TPL["Tool Planner<br/>(rules + cheap LLM)"]
+        TREG["ToolRegistry<br/>get_inventory · WO status<br/>create_PO · create_WO"]
     end
 
     subgraph LLMSTACK["LLM Layer (core/)"]
         ANS["LLM answer<br/>(ANSWER_MODEL)"]
+        GR["Guardrails<br/>(USE_GUARDRAILS)<br/>citations + safety regex"]
         CRT["Critic<br/>(CRITIC_MODEL)"]
         RET["Retry<br/>(RETRY_MODEL)"]
+    end
+
+    subgraph EVAL["Offline Eval (comparison/eval/)"]
+        GOLD["GoldenItem set"]
+        METR["faithfulness · relevancy<br/>citation_acc · guardrail_pass"]
+        HARN["EvalHarness + run.py"]
     end
 
     subgraph APPS["Entry Points"]
@@ -199,12 +242,25 @@ flowchart LR
     CLI --> PIPE
     PIPE --> CL
     PIPE --> QC
+    PIPE --> SC
 
+    SC -- "miss" --> QFMT
+    SC -- "hit" --> UI
     CL & QC --> QFMT --> HR
     BM & EMB & KG --> HR
-    HR --> ANS --> CRT
-    CRT -- FAIL --> RET --> CRT
-    CRT -- PASS --> UI
+    HR --> RR
+    QFMT --> TPL --> TREG
+    TREG -- "read tools" --> ANS
+    TREG -- "write tools" --> APR(["HITL approval"])
+    RR --> ANS --> GR --> CRT
+    CRT -- FAIL --> RET --> GR
+    GR -- BLOCK --> APR
+    CRT -- PASS --> SC
+    SC --> UI
+
+    HARN --> PIPE
+    GOLD --> HARN
+    HARN --> METR
 ```
 
 The dashed lines below show how artefacts persist between runs:
@@ -1445,6 +1501,83 @@ a prompt-engineering pinky-swear.
 
 ---
 
+## Advanced Patterns
+
+Six production-hardening patterns layer on top of the core Hybrid GraphRAG engine. Each is gated by
+a single env flag in `.env`; `run.sh` auto-populates the block on first run.
+
+| # | Pattern | Module | Flag (default) | What it gives you |
+| - | ------- | ------ | -------------- | ------------------ |
+| 1 | **Cross-encoder reranker** | `core/retrieval/reranker.py` | `USE_RERANKER=false` | Second-stage re-ranking of the RRF pool with a cross-encoder (`BAAI/bge-reranker-base`). Blends the cross-encoder score with the RRF score so lexical/graph signals are preserved. Graceful-degrades on any load failure. |
+| 2 | **Async parallel retrieval** | `core/retrieval/hybrid_retriever.py` | `USE_PARALLEL_RETRIEVAL=true` ★ | BM25 + FAISS + Graph retrievers run concurrently in a thread pool (~30 % latency cut). Per-leg timeout via `PARALLEL_RETRIEVAL_TIMEOUT_S`. |
+| 3 | **Semantic cache** | `core/semantic_cache.py` | `USE_SEMANTIC_CACHE=false` | In-memory LRU + TTL cache keyed by query-embedding cosine similarity. Hits skip the entire LLM stack. Refuses to store paused/rejected runs so HITL is never bypassed. |
+| 4 | **Deterministic guardrails** | `core/guardrails.py` | `USE_GUARDRAILS=true` ★ | Citation-required + safety-regex post-processor. Hard-blocks unsafe answers (LOTO bypass, energised electrical work, …), flags fabricated citations, folds soft violations back into the critic retry loop. |
+| 5 | **ERP / MES / SAP tool-calling** | `core/tools/` | `USE_TOOLS=false` | Planner picks read-only tools to enrich the answer prompt and queues write tools (`create_PO`, `create_WO`) through the existing HITL gate. Ships a `MockToolBackend`; subclass `ToolBackend` for the real adapter. |
+| 6 | **RAGAS-style offline eval** | `comparison/eval/` | _CLI tool — no flag_ | Golden Q&A set + deterministic metrics: `faithfulness`, `answer_relevancy`, `context_precision`, `citation_accuracy`, `guardrail_pass_rate`. CLI: `python -m comparison.eval.run`. |
+
+★ = safe-on by default. `run.sh` enables these two on a fresh `.env`; the other three stay opt-in
+to avoid surprising users with extra model downloads (rerank), memory pressure (cache) or write
+surface (tools). Override the default with `ADVANCED_DEFAULT=off ./run.sh` for a clean slate.
+
+### Updated request flow with the new stages
+
+```
+User query
+    │
+    ▼
+SemanticCache.get  ─── HIT ──► return cached answer (latency_ms ≈ 5)
+    │ MISS
+    ▼
+ClarifierAgent + QueryCorrector
+    │
+    ▼
+HybridRetriever
+    │   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+    ├──►│  BM25  (par) │ │ FAISS (par)  │ │ Graph (par)  │
+    │   └─────┬────────┘ └─────┬────────┘ └─────┬────────┘
+    │         └──── RRF + edge-prior boost ─────┘
+    │                          │
+    ▼                          ▼
+CrossEncoder Rerank (optional, blend with RRF)
+    │
+    ▼
+ToolPlanner ── read tools ──► execute → fold into prompt
+            └─ write tools ──► queue for HITL
+    │
+    ▼
+LLM answer  ──►  Guardrails (citation + safety regex)
+                    │ PASS / FAIL_REWRITE
+                    ▼
+                  Critic loop  ── PASS ──► SemanticCache.put → answer
+                    │                            ▲
+                    │ FAIL_REWRITE               │
+                    ▼                            │
+                  Retry LLM ──────────────────────┘
+                  Guardrails FAIL_BLOCK ──► HITL gate
+```
+
+### How to use them
+
+```bash
+# Enable everything for a single run (safe defaults stay on too).
+USE_RERANKER=true USE_SEMANTIC_CACHE=true USE_TOOLS=true ./run.sh
+
+# Run the offline eval harness against the bundled golden set.
+.venv/bin/python -m comparison.eval.run \
+    --pipelines hybrid_graphrag classical_rag direct_llm \
+    --output    comparison/eval/report.md \
+    --json-output comparison/eval/report.json \
+    --cache-dir   .eval_cache \
+    --min-faithfulness 0.0
+
+# Approve a write tool that was paused at the HITL gate.
+curl -X POST http://localhost:8000/api/approvals/<thread_id>/resume \
+     -H 'Content-Type: application/json' \
+     -d '{"approved": true, "approver": "supervisor.alex"}'
+```
+
+---
+
 ## Directory Structure
 
 ```
@@ -1524,16 +1657,29 @@ hybrid-graphrag-manufacturing/
 │   ├── document_acl.py             # ★ Classification tiers + role → tier map + ContextVar
 │   ├── auth_store.py               # ★ SQLite user/token store (auth.sqlite)
 │   ├── audit_log.py                # ★ Append-only audit + dashboard aggregations
+│   ├── guardrails.py               # ★ Citation + safety-regex post-processor
+│   ├── semantic_cache.py           # ★ Query-embedding cosine cache (LRU + TTL)
+│   ├── tools/                      # ★ ERP / MES / SAP / DB tool registry + planner
+│   │   ├── __init__.py
+│   │   ├── registry.py             #   ToolDefinition / ToolCall / ToolRegistry + MockBackend
+│   │   └── planner.py              #   rule + LLM tool router (read vs write split)
 │   └── retrieval/
 │       ├── bm25_retriever.py       # rank_bm25 OR pure-Python fallback
 │       ├── vector_retriever.py     # ChromaDB (optional — falls back to FAISS)
 │       ├── graph_retriever.py      # entity-driven scoring
-│       └── hybrid_retriever.py     # RRF + edge priors (accepts injected retriever)
+│       ├── reranker.py             # ★ Cross-encoder reranker (BAAI/bge-reranker-base)
+│       └── hybrid_retriever.py     # RRF + edge priors + parallel fan-out + rerank hook
 │
 ├── comparison/                     # Baselines for benchmarking
 │   ├── direct_llm.py               # No-retrieval baseline
 │   ├── classical_rag.py            # FAISS-only RAG (accepts injected retriever)
-│   └── benchmark.py                # SAMPLE_QUERIES + comparison runner
+│   ├── benchmark.py                # SAMPLE_QUERIES + comparison runner
+│   └── eval/                       # ★ RAGAS-style offline eval harness
+│       ├── __init__.py
+│       ├── golden.py               #   curated GoldenItem dataset
+│       ├── metrics.py              #   faithfulness · relevancy · context_precision · …
+│       ├── harness.py              #   EvalHarness + report builder
+│       └── run.py                  #   CLI: python -m comparison.eval.run
 │
 ├── utils/
 │   └── metrics.py                  # Latency/cost formatting + projections
@@ -1897,6 +2043,28 @@ above). Highlights:
 
 Domain ontology (entity / relation types and traversal routes) lives under `DOMAIN_ONTOLOGY` —
 extend it to add new equipment classes.
+
+### Advanced patterns (six flags)
+
+| Setting                            | Default | Effect                                                                                  |
+| ---------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `USE_PARALLEL_RETRIEVAL`           | `true`  | Fan BM25 / FAISS / Graph out across a thread pool. ~30 % latency win.                   |
+| `PARALLEL_RETRIEVAL_TIMEOUT_S`     | `15.0`  | Per-leg timeout (any retriever that exceeds returns empty).                             |
+| `USE_RERANKER`                     | `false` | Cross-encoder rerank after RRF (5-15 % quality lift on noisy corpora).                  |
+| `RERANKER_MODEL`                   | `BAAI/bge-reranker-base` | Any HF cross-encoder; first run downloads it.                          |
+| `RERANK_CANDIDATE_POOL`            | `20`    | Pool size forwarded to the reranker (final cut still uses `TOP_K_RERANK`).              |
+| `RERANK_BLEND_WEIGHT`              | `0.7`   | Final score = `w·rerank + (1-w)·RRF`; lower it to trust lexical signals more.           |
+| `USE_SEMANTIC_CACHE`               | `false` | Embed-and-match cache; hit short-circuits the entire LLM stack.                         |
+| `SEMANTIC_CACHE_THRESHOLD`         | `0.97`  | Cosine threshold for a hit (lower = more aggressive caching).                            |
+| `SEMANTIC_CACHE_MAX_SIZE`          | `256`   | LRU eviction beyond this size.                                                          |
+| `SEMANTIC_CACHE_TTL_SECONDS`       | `3600`  | Per-entry TTL.                                                                          |
+| `USE_GUARDRAILS`                   | `true`  | Deterministic citation + safety-regex post-processor before the critic.                 |
+| `GUARDRAILS_REQUIRE_CITATIONS`     | `true`  | Reject answers without at least `GUARDRAILS_MIN_CITATIONS` `[source, chunk_id]` cites.  |
+| `GUARDRAILS_MIN_CITATIONS`         | `1`     | Minimum citations required when the flag above is on.                                   |
+| `GUARDRAILS_BLOCK_UNSAFE`          | `true`  | Hard-block unsafe patterns (LOTO bypass, energised electrical work, …).                 |
+| `USE_TOOLS`                        | `false` | Enable the ERP / MES / SAP / DB tool-calling planner + registry.                        |
+| `TOOL_PLANNER_MODEL`               | `qwen2.5:3b` | Cheap LLM used when rule-based heuristics don't match.                            |
+| `TOOL_PLANNER_USE_LLM`             | `true`  | When `false`, only rule-based tool routing fires (no extra LLM cost).                   |
 
 ---
 

@@ -26,3 +26,7 @@ langchain-core>=0.3.0
 langgraph-checkpoint-sqlite>=2.0.0
 # Optional: ChromaDB-backed vector retriever (FAISS is the default).
 # chromadb>=0.4.0
+# Optional: cross-encoder reranker (USE_RERANKER=true).
+# Already pulled transitively by `sentence-transformers` above; pinning the
+# top-level dep makes the optional feature explicit.
+# sentence-transformers>=2.2.0 already listed above includes CrossEncoder.

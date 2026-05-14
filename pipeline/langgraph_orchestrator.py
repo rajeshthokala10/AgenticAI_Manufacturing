@@ -66,19 +66,28 @@ except ImportError:  # pragma: no cover - py<3.8
 from config import (
     ANSWER_MODEL,
     CAUSE_RANK_TOP_K,
+    GUARDRAILS_BLOCK_UNSAFE,
+    GUARDRAILS_MIN_CITATIONS,
+    GUARDRAILS_REQUIRE_CITATIONS,
     HITL_CHECKPOINT_BACKEND,
     HITL_DB_PATH,
     HITL_RISK_THRESHOLD,
     MAX_CRITIC_RETRIES,
     RETRY_MODEL,
+    TOOL_PLANNER_MODEL,
+    TOOL_PLANNER_USE_LLM,
     TOP_K_RERANK,
     USE_CAUSE_RANKING,
+    USE_GUARDRAILS,
     USE_HITL,
+    USE_SEMANTIC_CACHE,
+    USE_TOOLS,
 )
 from core.cause_ranker import format_for_prompt as format_causes_for_prompt
 from core.cause_ranker import rank_causes
 from core.criticality_classifier import classify as classify_risk
 from core.critic import critic_evaluate
+from core.guardrails import evaluate as guardrails_evaluate, merge_into_critic
 from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm_with_metrics
 from core.purchase_request import detect_and_enrich as detect_purchase_request
@@ -136,6 +145,14 @@ class GraphState(TypedDict, total=False):
     pipeline_status: str                # "complete" | "rejected"
     thread_id: str
 
+    # ── Tool-calling extensions (ERP/MES) ─────────────────────────────────
+    tool_results: List[Dict[str, Any]]     # results of executed read-only tools
+    pending_tool_calls: List[Dict[str, Any]]  # write tools awaiting HITL approval
+
+    # ── Guardrails ─────────────────────────────────────────────────────────
+    guardrails: Dict[str, Any]
+    guardrails_blocked: bool
+
 
 class LangGraphOrchestrator:
     """Drop-in replacement for ``core.orchestrator.Orchestrator``.
@@ -151,12 +168,14 @@ class LangGraphOrchestrator:
         knowledge_graph: KnowledgeGraph,
         vector_retriever: Optional[object] = None,
         skip_vector_build: bool = False,
+        embed_fn: Optional[Any] = None,
     ):
         self.documents = documents
         self.knowledge_graph = knowledge_graph
         self.retriever = HybridRetriever(documents, knowledge_graph, vector_retriever)
         self._indexed = False
         self._skip_vector_build = skip_vector_build
+        self._embed_fn = embed_fn
 
         # HITL plumbing — checkpointer + per-thread metadata cache so the
         # FastAPI server can list pending approvals without querying the
@@ -179,6 +198,25 @@ class LangGraphOrchestrator:
     ) -> Dict[str, Any]:
         total_start = time.time()
         thread_id = thread_id or f"thr_{uuid.uuid4().hex[:12]}"
+
+        # Semantic-cache fast-path. We deliberately key the cache on the raw
+        # query (post-clarification) so a cache hit short-circuits the whole
+        # graph including HITL. The cache helper refuses to store any state
+        # that is still awaiting approval so this is always safe.
+        cache = self._get_cache()
+        if cache is not None:
+            cached = cache.get(raw_query, namespace="diagnostic")
+            if cached is not None:
+                logger.info("semantic-cache HIT (thread=%s)", thread_id)
+                cached.setdefault("metrics", {})["total_latency_ms"] = (
+                    (time.time() - total_start) * 1000
+                )
+                cached["pipeline"] = "hybrid_graphrag_langgraph"
+                cached.setdefault("pipeline_status", "complete")
+                cached["approval_thread_id"] = thread_id
+                cached["awaiting_approval"] = False
+                return cached
+
         initial: GraphState = {
             "raw_query": raw_query,
             "attempts": [],
@@ -196,7 +234,10 @@ class LangGraphOrchestrator:
 
         config = {"configurable": {"thread_id": thread_id}}
         final_state: GraphState = self.graph.invoke(initial, config=config)
-        return self._wrap_run(raw_query, thread_id, final_state, total_start)
+        response = self._wrap_run(raw_query, thread_id, final_state, total_start)
+        if cache is not None and self._is_cacheable(response):
+            cache.put(raw_query, response, namespace="diagnostic")
+        return response
 
     def resume(
         self,
@@ -283,6 +324,7 @@ class LangGraphOrchestrator:
         g.add_node("format", self._format_node)
         g.add_node("detect_purchase", self._detect_purchase_node)
         g.add_node("retrieve", self._retrieve_node)
+        g.add_node("tools_read", self._tools_read_node)
         g.add_node("rank_causes", self._rank_causes_node)
         g.add_node("generate", self._generate_node)
         g.add_node("criticality_check", self._criticality_node)
@@ -293,11 +335,12 @@ class LangGraphOrchestrator:
         g.add_edge(START, "format")
         g.add_edge("format", "detect_purchase")
         g.add_edge("detect_purchase", "retrieve")
+        g.add_edge("retrieve", "tools_read")
         # Optional cause-ranking stage — short-circuited by the conditional
         # edge when USE_CAUSE_RANKING=false (it would otherwise idle-fire and
         # return immediately, but this keeps the graph picture cleaner).
         g.add_conditional_edges(
-            "retrieve",
+            "tools_read",
             self._route_after_retrieve,
             {"rank_causes": "rank_causes", "generate": "generate"},
         )
@@ -404,6 +447,50 @@ class LangGraphOrchestrator:
             "timings": timings,
         }
 
+    def _tools_read_node(self, state: GraphState) -> Dict[str, Any]:
+        """Plan + execute read-only ERP/MES tools; defer writes to HITL."""
+        if not USE_TOOLS:
+            return {}
+        t0 = time.time()
+        try:
+            from core.tools import get_registry
+            from core.tools.planner import plan_tool_calls, split_pending_calls
+        except Exception as exc:  # pragma: no cover - optional dep
+            logger.warning("Tool planner unavailable: %s", exc)
+            return {}
+
+        formatted = state.get("formatted", {}) or {}
+        calls = plan_tool_calls(
+            state.get("raw_query", ""),
+            intent=formatted.get("intent"),
+            use_llm=TOOL_PLANNER_USE_LLM,
+            model=TOOL_PLANNER_MODEL,
+        )
+        if not calls:
+            return {}
+
+        registry = get_registry()
+        buckets = split_pending_calls(calls)
+        results: List[Dict[str, Any]] = []
+        for call in buckets["read"]:
+            result = registry.execute(call)
+            results.append({
+                "tool": call.name,
+                "arguments": call.arguments,
+                "status": result.status,
+                "output": result.output,
+                "elapsed_ms": result.elapsed_ms,
+                "error": result.error,
+            })
+
+        timings = dict(state.get("timings", {}))
+        timings["tools_read_ms"] = (time.time() - t0) * 1000
+        return {
+            "tool_results": results,
+            "pending_tool_calls": [c.to_dict() for c in buckets["write"]],
+            "timings": timings,
+        }
+
     def _rank_causes_node(self, state: GraphState) -> Dict[str, Any]:
         t0 = time.time()
         formatted = state.get("formatted", {})
@@ -429,12 +516,14 @@ class LangGraphOrchestrator:
 
         cause_ranking = state.get("cause_ranking") or {}
         cause_block = format_causes_for_prompt(cause_ranking.get("candidates", []))
+        tool_block = self._format_tools_for_prompt(state.get("tool_results") or [])
 
         user_prompt = (
             f"QUERY: {formatted['expanded']}\n\n"
             f"INTENT: {formatted['intent']}\n"
             f"ENTITIES: {formatted['entities']}\n\n"
             + (cause_block + "\n\n" if cause_block else "")
+            + (tool_block + "\n\n" if tool_block else "")
             + f"EVIDENCE CHUNKS:\n{evidence_text}\n\n"
             + "Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."
         )
@@ -526,8 +615,36 @@ class LangGraphOrchestrator:
             attempt_idx,
         )
         critic_result["latency_ms"] = (time.time() - t0) * 1000
+
+        guardrail_payload: Dict[str, Any] = {}
+        blocked = False
+        if USE_GUARDRAILS:
+            report = guardrails_evaluate(
+                state["answer"],
+                state["evidence"],
+                require_citations=GUARDRAILS_REQUIRE_CITATIONS,
+                min_citations=GUARDRAILS_MIN_CITATIONS,
+                block_on_unsafe=GUARDRAILS_BLOCK_UNSAFE,
+            )
+            critic_result = merge_into_critic(critic_result, report)
+            guardrail_payload = report.to_dict()
+            blocked = bool(critic_result.get("guardrails_blocked"))
+
         attempts = list(state.get("attempts", [])) + [critic_result]
-        return {"attempts": attempts, "attempt_idx": attempt_idx}
+        update: Dict[str, Any] = {
+            "attempts": attempts,
+            "attempt_idx": attempt_idx,
+            "guardrails": guardrail_payload,
+            "guardrails_blocked": blocked,
+        }
+        if blocked:
+            update["answer"] = (
+                "🚫 This answer was blocked by the safety guardrails and "
+                "requires a human supervisor to review the request before any "
+                "action is taken."
+            )
+            update["pipeline_status"] = "rejected"
+        return update
 
     def _retry_node(self, state: GraphState) -> Dict[str, Any]:
         t0 = time.time()
@@ -574,6 +691,10 @@ class LangGraphOrchestrator:
         return "generate"
 
     def _route_after_critic(self, state: GraphState) -> str:
+        # Guardrails BLOCK short-circuits the whole loop regardless of the
+        # LLM critic verdict — deterministic safety always wins.
+        if state.get("guardrails_blocked"):
+            return "end"
         attempts = state.get("attempts", [])
         if not attempts:
             return "end"
@@ -603,6 +724,32 @@ class LangGraphOrchestrator:
         return "critic"  # approved — re-run critic on the (possibly edited) answer
 
     # ─── Helpers ─────────────────────────────────────────────────────────
+
+    # ─── Semantic cache helpers ──────────────────────────────────────────
+
+    def _get_cache(self):
+        if not USE_SEMANTIC_CACHE or self._embed_fn is None:
+            return None
+        from core.semantic_cache import get_cache
+        return get_cache(embed_fn=self._embed_fn)
+
+    @staticmethod
+    def _is_cacheable(response: Dict[str, Any]) -> bool:
+        if response.get("pipeline_status") in ("awaiting_approval", "rejected"):
+            return False
+        critic = (response.get("critic") or {}).get("final_verdict") or {}
+        return critic.get("verdict") == "PASS"
+
+    @staticmethod
+    def _format_tools_for_prompt(tool_results: List[Dict[str, Any]]) -> str:
+        if not tool_results:
+            return ""
+        lines = ["TOOL RESULTS (live data from ERP/MES):"]
+        for r in tool_results:
+            lines.append(
+                f"- {r.get('tool')}({r.get('arguments')}) → {r.get('output')}"
+            )
+        return "\n".join(lines)
 
     @staticmethod
     def _merge_metrics(running: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
@@ -675,10 +822,14 @@ class LangGraphOrchestrator:
                 "attempts": attempts,
                 "total_attempts": len(attempts),
             },
+            "guardrails": state.get("guardrails"),
+            "tool_results": state.get("tool_results", []),
+            "pending_tool_calls": state.get("pending_tool_calls", []),
             "metrics": {
                 "total_latency_ms": timings.get("total_latency_ms", 0.0),
                 "query_formatting_ms": timings.get("query_formatting_ms", 0.0),
                 "retrieval_ms": timings.get("retrieval_ms", 0.0),
+                "tools_read_ms": timings.get("tools_read_ms", 0.0),
                 "cause_ranking_ms": timings.get("cause_ranking_ms", 0.0),
                 "criticality_ms": timings.get("criticality_ms", 0.0),
                 "generation_ms": timings.get("generation_ms", 0.0),
@@ -688,6 +839,7 @@ class LangGraphOrchestrator:
                 "total_tokens": llm.get("total_tokens", 0),
                 "cost_estimate_usd": llm.get("cost_estimate", 0.0),
                 "model": llm.get("model"),
+                "cache_hit": False,
             },
             "pipeline": "hybrid_graphrag_langgraph",
         }

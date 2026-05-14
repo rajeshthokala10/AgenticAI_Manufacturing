@@ -26,6 +26,12 @@
 #   SKIP_HITL_SMOKE=1   skip the offline HITL smoke test (preflight)
 #   HITL_DEFAULT=on|off when creating a fresh .env, default the HITL gate
 #                       to enabled (on, default) or disabled (off)
+#   ADVANCED_DEFAULT=on|off  on a fresh .env, switch the new advanced
+#                            patterns on (rerank · cache · parallel ·
+#                            guardrails · tools); defaults to 'on' for the
+#                            safe subset (parallel retrieval + guardrails)
+#                            only — set to 'off' to leave every advanced
+#                            flag at its requirements.txt default.
 #   API_PORT / STREAMLIT_PORT / WEB_PORT    override listening ports
 #   NODE_BIN            path to node (default: auto-detect)
 # ---------------------------------------------------------------------------
@@ -281,6 +287,81 @@ bootstrap_env_file() {
     say "fixing: setting USE_LANGGRAPH=true so HITL actually runs"
     env_set "$ROOT/.env" USE_LANGGRAPH true
   fi
+
+  bootstrap_advanced_flags
+}
+
+# ── 3a. Advanced patterns (rerank · cache · parallel · guardrails · tools) ─
+#
+# These are the six "production hardening" patterns layered on top of the
+# core Hybrid GraphRAG engine. We split them into TWO buckets:
+#
+#   * SAFE-ON  — flags that have no external deps and only improve latency
+#                or safety. Enabled by default on a fresh .env so the demo
+#                ships with the right posture.
+#                  USE_PARALLEL_RETRIEVAL=true
+#                  USE_GUARDRAILS=true
+#
+#   * OPT-IN   — flags that pull additional models (cross-encoder), allocate
+#                memory (semantic cache) or expose write surface (ERP/MES
+#                tool calls). Left disabled by default and listed here so a
+#                user can flip them in seconds.
+#                  USE_RERANKER=false
+#                  USE_SEMANTIC_CACHE=false
+#                  USE_TOOLS=false
+#
+# Override the bucket with ADVANCED_DEFAULT=off ./run.sh if you want a
+# completely clean .env.
+
+bootstrap_advanced_flags() {
+  local advanced_default="${ADVANCED_DEFAULT:-on}"
+  local missing=0
+  local key
+  for key in USE_PARALLEL_RETRIEVAL USE_GUARDRAILS USE_RERANKER \
+             USE_SEMANTIC_CACHE USE_TOOLS; do
+    if ! grep -qE "^${key}=" "$ROOT/.env" 2>/dev/null; then
+      missing=1
+      break
+    fi
+  done
+
+  if [[ "$missing" == "0" ]]; then
+    return 0
+  fi
+
+  local safe_on="false"
+  [[ "$advanced_default" == "on" ]] && safe_on="true"
+
+  say "appending advanced-pattern defaults (safe-on=${safe_on})"
+  {
+    printf "\n"
+    printf "# ── Advanced patterns: rerank · cache · parallel · guardrails · tools ─\n"
+    printf "# Auto-added by run.sh. See README \"Advanced patterns\" + .env.example.\n"
+    printf "# Safe-on (no extra deps, latency / safety wins):\n"
+    printf "USE_PARALLEL_RETRIEVAL=%s\n" "$safe_on"
+    printf "PARALLEL_RETRIEVAL_TIMEOUT_S=15.0\n"
+    printf "USE_GUARDRAILS=%s\n" "$safe_on"
+    printf "GUARDRAILS_REQUIRE_CITATIONS=true\n"
+    printf "GUARDRAILS_MIN_CITATIONS=1\n"
+    printf "GUARDRAILS_BLOCK_UNSAFE=true\n"
+    printf "# Opt-in (extra cost / state / surface area — flip on when you need them):\n"
+    printf "USE_RERANKER=false\n"
+    printf "RERANKER_MODEL=BAAI/bge-reranker-base\n"
+    printf "RERANK_CANDIDATE_POOL=20\n"
+    printf "RERANK_BLEND_WEIGHT=0.7\n"
+    printf "USE_SEMANTIC_CACHE=false\n"
+    printf "SEMANTIC_CACHE_THRESHOLD=0.97\n"
+    printf "SEMANTIC_CACHE_MAX_SIZE=256\n"
+    printf "SEMANTIC_CACHE_TTL_SECONDS=3600\n"
+    printf "USE_TOOLS=false\n"
+    printf "TOOL_PLANNER_MODEL=qwen2.5:3b\n"
+    printf "TOOL_PLANNER_USE_LLM=true\n"
+  } >>"$ROOT/.env"
+  if [[ "$safe_on" == "true" ]]; then
+    ok "advanced patterns: parallel retrieval + guardrails ENABLED, rerank/cache/tools opt-in"
+  else
+    ok "advanced patterns: all flags appended at false (ADVANCED_DEFAULT=off)"
+  fi
 }
 
 # ── 3b. Pre-create directories the HITL stack writes to ────────────────────
@@ -469,6 +550,23 @@ effective_flag() {
 HITL_FLAG="$(effective_flag USE_HITL false)"
 LG_FLAG="$(effective_flag USE_LANGGRAPH false)"
 
+# Effective state of the six advanced-pattern flags (for the end-of-run
+# summary). Each `effective_flag <KEY> <default>` reads .env and falls
+# back to the upstream default in config.py.
+PAR_FLAG="$(effective_flag USE_PARALLEL_RETRIEVAL true)"
+GR_FLAG="$(effective_flag USE_GUARDRAILS true)"
+RR_FLAG="$(effective_flag USE_RERANKER false)"
+SC_FLAG="$(effective_flag USE_SEMANTIC_CACHE false)"
+TOOL_FLAG="$(effective_flag USE_TOOLS false)"
+
+# Helper that turns a flag value into a one-word on/off label.
+onoff() {
+  case "$1" in
+    1|true|yes|on) printf "on" ;;
+    *)            printf "off" ;;
+  esac
+}
+
 echo ""
 
 # ─ 6a. FastAPI ──
@@ -528,6 +626,10 @@ cat <<DONE
    Web        http://localhost:$WEB_PORT
 ${HITL_SUMMARY}
 
+   Advanced   parallel-retrieval=$(onoff "$PAR_FLAG")  guardrails=$(onoff "$GR_FLAG")  reranker=$(onoff "$RR_FLAG")
+              semantic-cache=$(onoff "$SC_FLAG")  tools=$(onoff "$TOOL_FLAG")
+              (toggle in .env — see README "Advanced patterns")
+
    Logs:    .run/logs/{api,streamlit,web,hitl-smoke}.log
    PIDs:    .run/{api,streamlit,web}.pid
 
@@ -535,4 +637,6 @@ ${HITL_SUMMARY}
    Status check:     ./status.sh
    Tail a service:   tail -f .run/logs/api.log
    Re-run smoke:     .venv/bin/python scripts/smoke_test_hitl.py
+   Offline eval:     .venv/bin/python -m comparison.eval.run \\
+                       --output comparison/eval/report.md
 DONE

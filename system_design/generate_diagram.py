@@ -8,7 +8,7 @@ Output:
 
     system_design/system_architecture.pdf
 
-The PDF is a 7-page design document:
+The PDF is an 8-page design document:
 
   Page 1 — Top-level architecture diagram
            Clients · API · Orchestration · NLU · Retrieval · LLMs ·
@@ -42,6 +42,11 @@ The PDF is a 7-page design document:
            Three-tier document classification, role → tier read-sets,
            ingest-time tagging, ContextVar-scoped retriever filter, and
            the operator-vs-plant-manager evidence delta.
+
+  Page 8 — Advanced patterns: rerank · cache · parallel · guardrails ·
+           tools · offline eval. The six production-hardening layers
+           that wrap the core engine, with flow diagrams, feature flags,
+           and the new request flow that incorporates all of them.
 """
 
 from __future__ import annotations
@@ -227,9 +232,9 @@ def draw_page1(c):
         "Hybrid GraphRAG Manufacturing — System Architecture",
         "Multi-turn chat \u2022 LangGraph-optional orchestration \u2022 "
         "Hybrid retrieval (BM25 + FAISS + KG) \u2022 "
-        "Optional cause-ranker \u2022 Critic-validated tiered LLMs",
+        "Cause-ranker \u2022 Critic + deterministic guardrails \u2022 ERP/MES tools (see p. 8)",
         page_num=1,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ─── Clients lane ──────────────────────────────────────────────────────
@@ -426,7 +431,7 @@ def draw_page2(c):
         "this StateGraph. The procedural orchestrator follows the "
         "same logical flow.",
         page_num=2,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ─── Top half: graph topology ─────────────────────────────────────────
@@ -525,7 +530,7 @@ def draw_page3(c):
         "(answer = gpt-4o, critic = qwen2.5:3b on Ollama). "
         "Local models are free; OpenAI pricing per core/llm_client.py.",
         page_num=3,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ─── Section 1: Per-mode summary ──────────────────────────────────────
@@ -662,7 +667,7 @@ def draw_page4(c):
         "criticality_check + human_approval (interrupt) \u2022 SQLite checkpointer "
         "\u2022 audit log \u2022 USE_HITL=true",
         page_num=4,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ── Topology (rewritten as a clean two-tier flow) ──────────────────────
@@ -1000,7 +1005,7 @@ def draw_page5(c):
         "interrupt \u2192 buyer signs off from the Approvals tab. Each step names "
         "the file and wire payload.",
         page_num=5,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ─── Lane setup ────────────────────────────────────────────────────────
@@ -1183,7 +1188,7 @@ def draw_page6(c):
         "single source of truth when changing a payload, an auth check, "
         "or a failure mode.",
         page_num=6,
-        total_pages=7,
+        total_pages=8,
     )
 
     # ─── Section 1: UI → API (HTTP) ────────────────────────────────────────
@@ -1339,7 +1344,7 @@ def draw_page7(c):
         "Three-tier classification \u2022 ContextVar-scoped retriever filter \u2022 "
         "smoke-test proven \u2022 core/document_acl.py",
         page_num=7,
-        total_pages=7,
+        total_pages=8,
     )
 
     # Local palette ---------------------------------------------------------
@@ -1700,6 +1705,276 @@ def draw_page7(c):
     )
 
 
+# ─── Page 8 — Advanced patterns (rerank · cache · parallel · guardrails ·
+#              tools · offline eval) ────────────────────────────────────────
+
+
+def draw_page8(c):
+    page_w, page_h = landscape(letter)
+    draw_page_header(
+        c,
+        "Advanced Patterns  \u2014  rerank \u00b7 cache \u00b7 parallel \u00b7 guardrails \u00b7 tools \u00b7 offline eval",
+        "Six production-hardening layers wrapping the core Hybrid GraphRAG engine. "
+        "Each is gated by a single env flag.",
+        page_num=8,
+        total_pages=8,
+    )
+
+    # ─── Top row: the six pattern cards ───────────────────────────────────
+    row1_top = page_h - 84
+    card_h = 92
+    card_w = (page_w - 36 * 2 - 12 * 5) / 6  # 6 cards, 12px gutters
+
+    cards = [
+        (
+            "1. Cross-encoder rerank",
+            RET,
+            [
+                "USE_RERANKER=false",
+                "BAAI/bge-reranker-base",
+                "2nd stage after RRF",
+                "blend = 0.7\u00b7CE + 0.3\u00b7RRF",
+                "+5\u201315% quality on noisy corpora",
+                "core/retrieval/reranker.py",
+            ],
+        ),
+        (
+            "2. Async parallel retrieval",
+            ORCH,
+            [
+                "USE_PARALLEL_RETRIEVAL=true \u2605",
+                "ThreadPoolExecutor(3)",
+                "BM25 \u2225 FAISS \u2225 Graph",
+                "per-leg timeout 15 s",
+                "~30% latency cut",
+                "hybrid_retriever._run_retrievers",
+            ],
+        ),
+        (
+            "3. Semantic cache",
+            STORE,
+            [
+                "USE_SEMANTIC_CACHE=false",
+                "cosine \u2265 0.97 \u2192 HIT",
+                "LRU \u00b7 max 256 \u00b7 TTL 3600 s",
+                "skips entire LLM stack",
+                "refuses paused / rejected runs",
+                "core/semantic_cache.py",
+            ],
+        ),
+        (
+            "4. Deterministic guardrails",
+            NLU,
+            [
+                "USE_GUARDRAILS=true \u2605",
+                "citations required",
+                "regex: loto bypass \u00b7 live elec \u00b7 PPE",
+                "BLOCK / REWRITE / PASS",
+                "feeds back into critic retry",
+                "core/guardrails.py",
+            ],
+        ),
+        (
+            "5. ERP/MES/SAP tool-calling",
+            LLM,
+            [
+                "USE_TOOLS=false",
+                "Planner: rules + cheap LLM",
+                "Read: inventory, WO status",
+                "Write: PO, WO  \u2192  HITL gate",
+                "MockBackend ships in-tree",
+                "core/tools/{registry,planner}.py",
+            ],
+        ),
+        (
+            "6. RAGAS-style offline eval",
+            INGEST,
+            [
+                "python -m comparison.eval.run",
+                "GoldenItem dataset (curated)",
+                "faithfulness \u00b7 relevancy",
+                "context_precision \u00b7 citation_acc",
+                "guardrail_pass_rate",
+                "comparison/eval/",
+            ],
+        ),
+    ]
+
+    x_cur = 36
+    for title, palette, items in cards:
+        draw_box(c, x_cur, row1_top - card_h, card_w, card_h, title, items, palette)
+        x_cur += card_w + 12
+
+    # Star legend for the safe-on flags.
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica-Oblique", 7.5)
+    c.drawString(
+        36, row1_top - card_h - 14,
+        "\u2605  safe-on by default on a fresh .env  (run.sh enables parallel retrieval + guardrails; "
+        "rerank \u00b7 cache \u00b7 tools stay opt-in to avoid surprise model downloads, memory pressure or write surface)",
+    )
+
+    # ─── Middle: updated request flow ─────────────────────────────────────
+    flow_top = row1_top - card_h - 36
+    flow_h = 240
+
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, flow_top, "Updated request flow with all patterns engaged")
+
+    flow_box_top = flow_top - 12
+    # Node coordinates — laid out as a horizontal pipeline with vertical
+    # branches for the cache, guardrails, and tool fan-out.
+    node_w, node_h = 110, 30
+    row_main_y = flow_box_top - 28
+
+    def node(x, y, label, palette=RET, w=node_w, h=node_h, items=None):
+        items = items or [label]
+        draw_box(c, x, y, w, h, "", items, palette)
+
+    # Linear chain
+    chain_y = row_main_y
+    chain_x_start = 38
+    gap = 12
+    labels = [
+        ("User query", CLIENT),
+        ("Semantic cache", STORE),
+        ("Clarifier + QueryCorrector", NLU),
+        ("Hybrid retrieval (parallel)", RET),
+        ("Cross-encoder rerank", RET),
+        ("Tool planner", LLM),
+        ("LLM answer", LLM),
+        ("Guardrails", NLU),
+        ("Critic loop", LLM),
+    ]
+    xs = []
+    x_cur = chain_x_start
+    for _ in labels:
+        xs.append(x_cur)
+        x_cur += node_w + gap
+    for x, (lab, pal) in zip(xs, labels):
+        node(x, chain_y, lab, palette=pal, items=[lab])
+    # Arrows between consecutive boxes.
+    for i in range(len(xs) - 1):
+        draw_arrow(
+            c,
+            xs[i] + node_w, chain_y + node_h / 2,
+            xs[i + 1], chain_y + node_h / 2,
+        )
+
+    # Cache HIT short-circuit arrow up to the right edge.
+    cache_x = xs[1] + node_w / 2
+    out_y = chain_y + node_h + 18
+    out_x = xs[-1] + node_w
+    draw_arrow(c, cache_x, chain_y + node_h, cache_x, out_y, label="HIT")
+    draw_arrow(c, cache_x, out_y, out_x, out_y)
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawString(out_x + 4, out_y - 3, "cached answer")
+
+    # Tool planner write-tool branch down to HITL.
+    tp_x = xs[5] + node_w / 2
+    hitl_y = chain_y - 36
+    draw_arrow(c, tp_x, chain_y, tp_x, hitl_y + node_h, label="write tool")
+    hitl_x = tp_x - node_w / 2
+    node(hitl_x, hitl_y, "HITL approval", palette=API_PAL,
+         items=["HITL approval (LangGraph)"])
+    # Read-tool feed into LLM answer.
+    read_x = xs[6] + node_w / 2
+    draw_arrow(c, tp_x + node_w / 2, chain_y + node_h / 2,
+               read_x - node_w / 2, chain_y + node_h / 2,
+               label="read tool result")
+
+    # Guardrails BLOCK branch down to HITL.
+    gr_x = xs[7] + node_w / 2
+    draw_arrow(c, gr_x, chain_y, gr_x, hitl_y + node_h, label="BLOCK")
+    node(gr_x - node_w / 2, hitl_y, "HITL approval", palette=API_PAL,
+         items=["HITL approval (block)"])
+
+    # Critic FAIL_REWRITE loop back to LLM answer.
+    crit_x = xs[8] + node_w / 2
+    llm_x = xs[6] + node_w / 2
+    loop_y = chain_y - 18
+    draw_arrow(c, crit_x, chain_y, crit_x, loop_y, label="FAIL_REWRITE")
+    draw_arrow(c, crit_x, loop_y, llm_x, loop_y)
+    draw_arrow(c, llm_x, loop_y, llm_x, chain_y)
+
+    # Critic PASS arrow back into cache for write-through.
+    pass_y = chain_y + node_h + 32
+    cache_top = chain_y + node_h
+    draw_arrow(c, crit_x, chain_y + node_h, crit_x, pass_y, label="PASS")
+    draw_arrow(c, crit_x, pass_y, cache_x, pass_y)
+    draw_arrow(c, cache_x, pass_y, cache_x, cache_top)
+    c.setFillColor(SUBTITLE_COLOR)
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawString(cache_x + 6, pass_y + 2, "write-through")
+
+    # ─── Bottom: feature-flag + offline-eval reference table ──────────────
+    tbl_top = hitl_y - 28
+    c.setFillColor(TITLE_COLOR)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(36, tbl_top, "Feature flags  (config.py)")
+
+    headers = ["Flag", "Default", "Effect"]
+    rows = [
+        ("USE_RERANKER",              "false", "Cross-encoder rerank after RRF (5\u201315% quality lift)"),
+        ("RERANKER_MODEL",            "BAAI/bge-reranker-base", "Any HF cross-encoder; first run downloads it"),
+        ("RERANK_CANDIDATE_POOL",     "20",    "Pool forwarded to reranker; final cut uses TOP_K_RERANK"),
+        ("RERANK_BLEND_WEIGHT",       "0.7",   "Final = w\u00b7CE + (1\u2212w)\u00b7RRF"),
+        ("USE_PARALLEL_RETRIEVAL",    "true \u2605", "Fan BM25 / FAISS / Graph across a thread pool"),
+        ("PARALLEL_RETRIEVAL_TIMEOUT_S", "15.0", "Per-leg timeout (empty result on miss)"),
+        ("USE_SEMANTIC_CACHE",        "false", "In-memory cosine cache; hit short-circuits LLM stack"),
+        ("SEMANTIC_CACHE_THRESHOLD",  "0.97",  "Cosine threshold for a hit"),
+        ("SEMANTIC_CACHE_MAX_SIZE",   "256",   "LRU eviction limit"),
+        ("SEMANTIC_CACHE_TTL_SECONDS","3600",  "Per-entry TTL"),
+        ("USE_GUARDRAILS",            "true \u2605", "Citation + safety regex post-processor"),
+        ("GUARDRAILS_REQUIRE_CITATIONS","true","Reject answers without [source, chunk_id]"),
+        ("GUARDRAILS_MIN_CITATIONS",  "1",     "Minimum citations required"),
+        ("GUARDRAILS_BLOCK_UNSAFE",   "true",  "Hard-block LOTO bypass, live electrical, \u2026"),
+        ("USE_TOOLS",                 "false", "Enable ERP/MES tool planner + registry"),
+        ("TOOL_PLANNER_MODEL",        "qwen2.5:3b", "Cheap LLM used by the planner"),
+        ("TOOL_PLANNER_USE_LLM",      "true",  "When false, only rule-based routing fires"),
+    ]
+    col_widths = [180, 70, page_w - 36 * 2 - 180 - 70]
+    y_after = draw_table(
+        c, 36, tbl_top - 6, headers, rows, col_widths,
+        row_height=12, header_height=16, font_size=7, header_font_size=7.5,
+    )
+
+    # ─── Eval harness ribbon ──────────────────────────────────────────────
+    ribbon_y = y_after - 28
+    ribbon_h = 56
+    c.setFillColor(OPTIONAL[0])
+    c.setStrokeColor(OPTIONAL[1])
+    c.setLineWidth(1.0)
+    c.roundRect(36, ribbon_y, page_w - 36 * 2, ribbon_h, 6, fill=1, stroke=1)
+    c.setFillColor(OPTIONAL[1])
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(46, ribbon_y + ribbon_h - 16,
+                 "RAGAS-style offline eval  \u2014  comparison/eval/  \u2014  one command")
+    c.setFillColor(black)
+    c.setFont("Courier", 8)
+    c.drawString(
+        46, ribbon_y + ribbon_h - 30,
+        "python -m comparison.eval.run --pipelines hybrid_graphrag classical_rag direct_llm "
+        "--output comparison/eval/report.md --json-output comparison/eval/report.json --cache-dir .eval_cache",
+    )
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(SUBTITLE_COLOR)
+    c.drawString(
+        46, ribbon_y + 8,
+        "Metrics: faithfulness \u00b7 answer_relevancy \u00b7 context_precision \u00b7 citation_accuracy "
+        "\u00b7 must_mention_coverage \u00b7 guardrail_pass_rate \u00b7 forbidden_violation_rate.   "
+        "Exit code is non-zero when --min-faithfulness floor is breached \u2014 CI-friendly.",
+    )
+
+    draw_page_footer(
+        c,
+        "Modules: core/retrieval/reranker.py \u00b7 core/semantic_cache.py \u00b7 core/guardrails.py "
+        "\u00b7 core/tools/ \u00b7 comparison/eval/",
+    )
+
+
 # ─── Driver ─────────────────────────────────────────────────────────────────
 
 
@@ -1710,7 +1985,8 @@ def main():
     c.setAuthor("hybrid-graphrag-manufacturing")
     c.setSubject(
         "Architecture · LangGraph topology · Cost & latency · HITL · "
-        "Low-level component sequence · Interaction contracts · Document ACLs"
+        "Low-level component sequence · Interaction contracts · Document ACLs · "
+        "Advanced patterns (rerank · cache · parallel · guardrails · tools · eval)"
     )
 
     draw_page1(c)
@@ -1732,6 +2008,9 @@ def main():
     c.showPage()
 
     draw_page7(c)
+    c.showPage()
+
+    draw_page8(c)
     c.showPage()
 
     c.save()

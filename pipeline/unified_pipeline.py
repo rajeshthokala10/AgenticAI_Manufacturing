@@ -60,6 +60,11 @@ class PipelineResult:
     interrupt_payload: Optional[Dict[str, Any]] = None
     pipeline_status: str = "complete"  # 'complete' | 'awaiting_approval' | 'rejected'
 
+    # Guardrails + tool-calling extensions
+    guardrails: Optional[Dict[str, Any]] = None
+    tool_results: List[Dict[str, Any]] = field(default_factory=list)
+    pending_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> Dict:
         out = {
             "mode": self.mode,
@@ -79,6 +84,9 @@ class PipelineResult:
             "human_decision": self.human_decision,
             "interrupt_payload": self.interrupt_payload,
             "pipeline_status": self.pipeline_status,
+            "guardrails": self.guardrails,
+            "tool_results": self.tool_results,
+            "pending_tool_calls": self.pending_tool_calls,
         }
         if self.clarification is not None:
             out["intent"] = self.clarification.intent.value
@@ -221,6 +229,8 @@ class ManufacturingPipeline:
         """
         from core.orchestrator import Orchestrator as ProceduralOrchestrator
 
+        embed_fn = self._make_embed_fn()
+
         if use_langgraph:
             try:
                 from pipeline.langgraph_orchestrator import LangGraphOrchestrator
@@ -232,6 +242,7 @@ class ManufacturingPipeline:
                     self.kg,
                     vector_retriever=self.faiss_retriever,
                     skip_vector_build=True,
+                    embed_fn=embed_fn,
                 )
             except ImportError as exc:
                 logger.warning(
@@ -247,7 +258,23 @@ class ManufacturingPipeline:
             self.kg,
             vector_retriever=self.faiss_retriever,
             skip_vector_build=True,
+            embed_fn=embed_fn,
         )
+
+    def _make_embed_fn(self):
+        """Return a callable ``str -> np.ndarray`` reusing the FAISS embedder.
+
+        Used by the semantic cache to embed queries without loading a second
+        sentence-transformers model into memory.
+        """
+        ep = self.embedding_pipeline
+
+        def _embed(text: str):
+            model = ep.get_model()
+            vec = model.encode([text], convert_to_numpy=True, show_progress_bar=False)
+            return vec[0]
+
+        return _embed
 
     def _stats(self) -> Dict[str, Any]:
         kg_stats = self.kg.get_stats() if self.kg is not None else {}
@@ -423,6 +450,9 @@ class ManufacturingPipeline:
             human_decision=result.get("human_decision"),
             interrupt_payload=result.get("interrupt_payload"),
             pipeline_status=status,
+            guardrails=result.get("guardrails"),
+            tool_results=result.get("tool_results", []) or [],
+            pending_tool_calls=result.get("pending_tool_calls", []) or [],
         )
 
     def classical(self, query: str) -> PipelineResult:
@@ -464,6 +494,37 @@ class ManufacturingPipeline:
             "classical_rag": self.classical(query),
             "hybrid_graphrag": self.diagnostic(query),
         }
+
+    # ─── Tool-calling (ERP / MES) ────────────────────────────────────────
+
+    def execute_approved_tool_call(
+        self,
+        tool_call: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Execute a previously-paused write tool call after human approval.
+
+        ``tool_call`` should be one of the dicts emitted in
+        ``PipelineResult.pending_tool_calls`` (which mirrors
+        :class:`core.tools.registry.ToolCall.to_dict`). Returns the result
+        dict from the registry. Side-effect-free tool calls run inline in
+        ``diagnostic()`` and do not require this path.
+        """
+        from core.tools import ToolCall, get_registry
+
+        name = tool_call.get("name") or ""
+        if not name:
+            raise ValueError("tool_call missing 'name'")
+        call = ToolCall(
+            name=name,
+            arguments=dict(tool_call.get("arguments") or {}),
+            side_effect=str(tool_call.get("side_effect") or "write"),
+            requires_approval=bool(tool_call.get("requires_approval", True)),
+            risk_score=float(tool_call.get("risk_score", 0.0) or 0.0),
+            rationale=str(tool_call.get("rationale") or "human-approved"),
+            call_id=str(tool_call.get("call_id") or f"tc_{int(time.time() * 1000)}"),
+        )
+        result = get_registry().execute(call)
+        return result.to_dict()
 
     def _require_ready(self) -> None:
         if not self._ready:
