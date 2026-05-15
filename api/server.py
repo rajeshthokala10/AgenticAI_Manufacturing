@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -41,11 +42,18 @@ from api.auth import (  # noqa: E402
 )
 from api.serializers import serialize_state, serialize_turn  # noqa: E402
 from config import (  # noqa: E402
+    DEFAULT_DOMAIN,
+    DOMAIN_DISPLAY,
+    DOMAIN_EMPTY_STATE,
+    DOMAIN_EXAMPLES,
+    DOMAIN_PLACEHOLDER,
+    DOMAINS,
     EMBEDDING_MODEL,
     LLM_MODEL,
     USE_HITL,
     USE_LANGGRAPH,
     llm_available,
+    normalize_domain,
 )
 from core.audit_log import get_default_log  # noqa: E402
 from core.auth_store import UserRecord  # noqa: E402
@@ -87,38 +95,67 @@ app.include_router(auth_router)
 
 
 class _Singleton:
-    pipe: ManufacturingPipeline | None = None
-    agent: ChatAgent | None = None
-    sessions: Dict[str, ChatState] = {}
-    session_locks: Dict[str, threading.Lock] = {}
-    # Map paused approval thread_id → session_id so the resume endpoint can
-    # append the resumed answer to the right ChatState.
-    thread_to_session: Dict[str, str] = {}
+    # Per-domain registries. ``pipe`` / ``agent`` (the legacy attributes)
+    # always point at the DEFAULT_DOMAIN entry for back-compat with code
+    # paths that still access them directly.
+    pipes: Dict[str, ManufacturingPipeline] = {}
+    agents: Dict[str, ChatAgent] = {}
+    # Sessions are keyed by ``(domain, session_id)`` so the same client
+    # token can hold two independent conversations.
+    sessions: Dict[tuple, ChatState] = {}
+    session_locks: Dict[tuple, threading.Lock] = {}
+    # Map paused approval thread_id → (domain, session_id) so the resume
+    # endpoint can append the resumed answer to the right ChatState.
+    thread_to_session: Dict[str, tuple] = {}
     ready: bool = False
     error: str | None = None
 
 
-def _get_session_lock(session_id: str) -> threading.Lock:
-    lock = _Singleton.session_locks.get(session_id)
+def _default_pipe() -> ManufacturingPipeline | None:
+    """Back-compat helper for endpoints that still operate on a single
+    domain — primarily the HITL approval flow, which is cross-domain."""
+    return _Singleton.pipes.get(DEFAULT_DOMAIN)
+
+
+def _pipe_for(domain: str | None) -> ManufacturingPipeline:
+    d = normalize_domain(domain)
+    pipe = _Singleton.pipes.get(d)
+    if pipe is None:
+        raise HTTPException(503, detail=f"Pipeline for domain {d!r} not ready")
+    return pipe
+
+
+def _agent_for(domain: str | None) -> ChatAgent:
+    d = normalize_domain(domain)
+    agent = _Singleton.agents.get(d)
+    if agent is None:
+        raise HTTPException(503, detail=f"Agent for domain {d!r} not ready")
+    return agent
+
+
+def _get_session_lock(domain: str, session_id: str) -> threading.Lock:
+    key = (domain, session_id)
+    lock = _Singleton.session_locks.get(key)
     if lock is None:
         lock = threading.Lock()
-        _Singleton.session_locks[session_id] = lock
+        _Singleton.session_locks[key] = lock
     return lock
 
 
 @app.on_event("startup")
 def _bootstrap() -> None:
     try:
-        logger.info("Building / loading ManufacturingPipeline…")
-        pipe = ManufacturingPipeline()
-        pipe.build_or_load(enable_llm=llm_available())
-        _Singleton.pipe = pipe
-        _Singleton.agent = ChatAgent(pipe, max_optional_asks=1)
+        for domain in DOMAINS:
+            logger.info("Building / loading ManufacturingPipeline [%s]…", domain)
+            pipe = ManufacturingPipeline(domain=domain)
+            pipe.build_or_load(enable_llm=llm_available())
+            _Singleton.pipes[domain] = pipe
+            _Singleton.agents[domain] = ChatAgent(pipe, max_optional_asks=1)
+            logger.info("Pipeline ready [%s]: %s", domain, pipe.stats)
         _Singleton.ready = True
-        logger.info("Pipeline ready: %s", pipe.stats)
     except Exception as exc:  # pragma: no cover — startup failure is fatal but logged
         _Singleton.error = repr(exc)
-        logger.exception("Failed to bootstrap pipeline: %s", exc)
+        logger.exception("Failed to bootstrap pipelines: %s", exc)
 
 
 # ────────────────────────── request / response ──────────────────────────────
@@ -129,10 +166,15 @@ class ChatRequest(BaseModel):
         default_factory=lambda: uuid.uuid4().hex,
         description="Stable session identifier (UUID). Reuse to keep history.",
     )
+    domain: str = Field(
+        default=DEFAULT_DOMAIN,
+        description=f"Which domain to query: one of {list(DOMAINS)}.",
+    )
 
 
 class ResetRequest(BaseModel):
     session_id: str
+    domain: str = Field(default=DEFAULT_DOMAIN)
 
 
 # ────────────────────────────── routes ──────────────────────────────────────
@@ -143,7 +185,17 @@ def health() -> Dict:
         "status": "ok" if _Singleton.ready else "starting",
         "ready": _Singleton.ready,
         "error": _Singleton.error,
-        "llm_enabled": (_Singleton.pipe.llm_enabled if _Singleton.pipe else False),
+        "domains": list(DOMAINS),
+        "default_domain": DEFAULT_DOMAIN,
+        "domain_status": {
+            d: {
+                "loaded": d in _Singleton.pipes,
+                "llm_enabled": (
+                    _Singleton.pipes[d].llm_enabled if d in _Singleton.pipes else False
+                ),
+            }
+            for d in DOMAINS
+        },
         "llm_model": LLM_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "version": "1.0.0",
@@ -152,11 +204,40 @@ def health() -> Dict:
     }
 
 
+@app.get("/api/domains")
+def domains() -> Dict:
+    """Auto-discovered domain catalog.
+
+    Returns the same registry the Streamlit sidebar selector and the
+    Next.js header switcher use. Source of truth: ``config.DOMAIN_DISPLAY``,
+    which itself is derived from ``schemas/*.yaml`` at startup.
+    """
+    return {
+        "default": DEFAULT_DOMAIN,
+        "domains": [
+            {
+                "id": d,
+                "label": DOMAIN_DISPLAY[d]["label"],
+                "emoji": DOMAIN_DISPLAY[d]["emoji"],
+                "color": DOMAIN_DISPLAY[d]["color"],
+                "placeholder": DOMAIN_PLACEHOLDER.get(d, ""),
+                "empty_state": DOMAIN_EMPTY_STATE.get(d, {}),
+                "examples": DOMAIN_EXAMPLES.get(d, []),
+                "loaded": d in _Singleton.pipes,
+            }
+            for d in DOMAINS
+        ],
+    }
+
+
 @app.get("/api/stats")
-def stats() -> Dict:
-    if not _Singleton.ready or _Singleton.pipe is None:
-        raise HTTPException(503, detail="Pipeline not ready")
-    return _Singleton.pipe.stats
+def stats(domain: str = DEFAULT_DOMAIN) -> Dict:
+    if not _Singleton.ready:
+        raise HTTPException(503, detail="Pipelines not ready")
+    pipe = _pipe_for(domain)
+    out = dict(pipe.stats)
+    out["domain"] = normalize_domain(domain)
+    return out
 
 
 @app.post("/api/chat")
@@ -164,14 +245,18 @@ def chat(
     req: ChatRequest,
     user: Optional[UserRecord] = Depends(get_optional_user),
 ) -> Dict:
-    if not _Singleton.ready or _Singleton.agent is None:
-        raise HTTPException(503, detail="Pipeline still bootstrapping — try again in a moment.")
+    if not _Singleton.ready:
+        raise HTTPException(503, detail="Pipelines still bootstrapping — try again in a moment.")
     if not req.message.strip():
         raise HTTPException(400, detail="Empty message.")
 
-    lock = _get_session_lock(req.session_id)
+    domain = normalize_domain(req.domain)
+    agent = _agent_for(domain)
+    pipe = _pipe_for(domain)
+
+    lock = _get_session_lock(domain, req.session_id)
     with lock:
-        state = _Singleton.sessions.setdefault(req.session_id, ChatState())
+        state = _Singleton.sessions.setdefault((domain, req.session_id), ChatState())
         # Stamp the request's document-ACL view so every retriever called
         # under ``agent.handle`` filters chunks against the signed-in user's
         # role. Anonymous chats fall through to ``public``-only via the
@@ -179,23 +264,23 @@ def chat(
         user_role = user.role if user is not None else None
         try:
             with with_user_classifications(user_role):
-                _Singleton.agent.handle(state, req.message)
+                agent.handle(state, req.message)
         except Exception as exc:
-            logger.exception("Agent failure on session %s", req.session_id)
+            logger.exception("Agent failure on session %s/%s", domain, req.session_id)
             raise HTTPException(500, detail=f"Agent error: {exc!r}") from exc
 
         # Phase A: track pending approvals so /api/approvals/{id}/resume can
-        # find the originating session.
+        # find the originating (domain, session).
         if state.pending_approval_thread_id:
-            _Singleton.thread_to_session[state.pending_approval_thread_id] = req.session_id
-            # Phase D: stamp the maker identity + required-roles policy onto
-            # the pending entry. The orchestrator built the entry but doesn't
-            # know about users/RBAC.
-            _annotate_new_pending(state.pending_approval_thread_id, user)
+            _Singleton.thread_to_session[state.pending_approval_thread_id] = (
+                domain, req.session_id,
+            )
+            _annotate_new_pending(state.pending_approval_thread_id, user, pipe=pipe)
 
         new_turns = state.turns[-6:]
         body = {
             "session_id": req.session_id,
+            "domain": domain,
             "new_turns": [serialize_turn(t) for t in new_turns],
             "state": serialize_state(state),
             "awaiting_approval": bool(state.pending_approval_thread_id),
@@ -205,9 +290,14 @@ def chat(
         return body
 
 
-def _annotate_new_pending(thread_id: str, user: Optional[UserRecord]) -> None:
+def _annotate_new_pending(
+    thread_id: str,
+    user: Optional[UserRecord],
+    pipe: ManufacturingPipeline | None = None,
+) -> None:
     """Attach maker_user_id + computed required_roles to a newly paused thread."""
-    pipe = _Singleton.pipe
+    if pipe is None:
+        pipe = _Singleton.pipes.get(DEFAULT_DOMAIN)
     if pipe is None or not hasattr(pipe, "annotate_pending"):
         return
     pending = pipe.get_pending_approval(thread_id) or {}
@@ -220,23 +310,154 @@ def _annotate_new_pending(thread_id: str, user: Optional[UserRecord]) -> None:
     )
 
 
+class OnboardAnalyzeRequest(BaseModel):
+    domain_id: str = Field(..., description="Lowercase a-z/0-9/_ identifier for the new domain.")
+    docs: List[str] = Field(..., description="Plaintext sample documents.")
+    domain_hint: str = Field(default="", description="Optional human label.")
+    user_prefs: Dict[str, Any] = Field(default_factory=dict)
+    prior_qa: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class OnboardSaveRequest(BaseModel):
+    domain_id: str
+    yaml: str
+
+
+@app.post("/api/onboard/analyze")
+def onboard_analyze(req: OnboardAnalyzeRequest) -> Dict:
+    """Drive one round of the schema-authoring agent. Returns either a
+    list of follow-up questions or a validated YAML blob.
+    """
+    from core.onboarding_agent import analyze
+    try:
+        response = analyze(
+            req.domain_id,
+            req.docs,
+            domain_hint=req.domain_hint,
+            user_prefs=req.user_prefs,
+            prior_qa=req.prior_qa,
+        )
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, detail=str(e))
+    except Exception as e:
+        logger.exception("onboarding analyze failed for %s", req.domain_id)
+        raise HTTPException(500, detail=f"Onboarding error: {e!r}") from e
+    return response.to_dict()
+
+
+@app.post("/api/onboard/save")
+def onboard_save(req: OnboardSaveRequest) -> Dict:
+    """Persist the agent-authored YAML to ``schemas/<domain>.yaml``."""
+    from core.onboarding_agent import save_schema
+    try:
+        dest = save_schema(req.domain_id, req.yaml)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.exception("save_schema failed for %s", req.domain_id)
+        raise HTTPException(500, detail=f"Save error: {e!r}") from e
+    return {"saved_to": str(dest), "domain_id": req.domain_id}
+
+
+class DiagnosticRequest(BaseModel):
+    message: str = Field(..., description="The diagnostic query.")
+    domain: str = Field(
+        default=DEFAULT_DOMAIN,
+        description=f"Which domain to run against: one of {list(DOMAINS)}.",
+    )
+
+
+@app.post("/api/diagnostic")
+def diagnostic(
+    req: DiagnosticRequest,
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> Dict:
+    """Single-shot blocking diagnostic run — mirrors Streamlit's Diagnostic
+    tab. Calls ``pipe.diagnostic(query)`` and returns the full
+    ``PipelineResult`` dict (answer + evidence + graph_context + metrics).
+    """
+    if not _Singleton.ready:
+        raise HTTPException(503, detail="Pipelines still bootstrapping — try again in a moment.")
+    if not req.message.strip():
+        raise HTTPException(400, detail="Empty message.")
+
+    pipe = _pipe_for(req.domain)
+    user_role = user.role if user is not None else None
+    try:
+        with with_user_classifications(user_role):
+            result = pipe.diagnostic(req.message)
+    except Exception as exc:
+        logger.exception("Diagnostic failure on domain %s", req.domain)
+        raise HTTPException(500, detail=f"Diagnostic error: {exc!r}") from exc
+    return result.to_dict()
+
+
+@app.post("/api/chat/stream")
+def chat_stream(
+    req: ChatRequest,
+    user: Optional[UserRecord] = Depends(get_optional_user),
+) -> StreamingResponse:
+    """Stream the diagnostic pipeline as Server-Sent Events.
+
+    Each line emitted on the wire is a JSON-encoded event:
+
+    * ``{"event": "node_update", "node": "...", "update": {...}}``
+    * ``{"event": "complete", "response": {...}}`` (terminal, success)
+    * ``{"event": "interrupted", "response": {...}}`` (HITL pause)
+    * ``{"event": "error", "message": "..."}``
+
+    Requires ``USE_LANGGRAPH=true``. Falls back to a single ``complete``
+    event for the procedural orchestrator (which has no intermediate state).
+    """
+    import json as _json
+
+    if not _Singleton.ready:
+        raise HTTPException(503, detail="Pipelines still bootstrapping — try again in a moment.")
+    if not req.message.strip():
+        raise HTTPException(400, detail="Empty message.")
+
+    pipe = _pipe_for(req.domain)
+    user_role = user.role if user is not None else None
+
+    def _event_stream():
+        try:
+            with with_user_classifications(user_role):
+                if hasattr(pipe, "diagnostic_stream") and pipe._orchestrator_engine == "langgraph":
+                    for event in pipe.diagnostic_stream(req.message):
+                        yield f"data: {_json.dumps(event, default=str)}\n\n"
+                else:
+                    result = pipe.diagnostic(req.message)
+                    yield f"data: {_json.dumps({'event': 'complete', 'response': result.to_dict()}, default=str)}\n\n"
+        except Exception as exc:  # pragma: no cover - error surface
+            logger.exception("chat_stream failure")
+            err = {"event": "error", "message": f"{exc!r}"}
+            yield f"data: {_json.dumps(err)}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+
 @app.post("/api/reset")
 def reset(req: ResetRequest) -> Dict:
-    if req.session_id in _Singleton.sessions:
-        # Drop any thread→session mappings owned by this session.
+    domain = normalize_domain(req.domain)
+    key = (domain, req.session_id)
+    if key in _Singleton.sessions:
         _Singleton.thread_to_session = {
-            tid: sid for tid, sid in _Singleton.thread_to_session.items()
-            if sid != req.session_id
+            tid: ds for tid, ds in _Singleton.thread_to_session.items()
+            if ds != key
         }
-        _Singleton.sessions[req.session_id].reset()
-    return {"ok": True, "session_id": req.session_id}
+        _Singleton.sessions[key].reset()
+    return {"ok": True, "session_id": req.session_id, "domain": domain}
 
 
 @app.get("/api/sessions/{session_id}")
-def get_session(session_id: str) -> Dict:
-    state = _Singleton.sessions.get(session_id)
+def get_session(session_id: str, domain: str = DEFAULT_DOMAIN) -> Dict:
+    d = normalize_domain(domain)
+    state = _Singleton.sessions.get((d, session_id))
     if state is None:
-        return {"session_id": session_id, "state": {"turns": [], "awaiting_slot": None, "awaiting_prompt": None}}
+        return {"session_id": session_id, "domain": d,
+                "state": {"turns": [], "awaiting_slot": None, "awaiting_prompt": None}}
     return {"session_id": session_id, "state": serialize_state(state)}
 
 
@@ -255,7 +476,7 @@ class ApprovalDecision(BaseModel):
 def _require_hitl() -> None:
     if not USE_HITL:
         raise HTTPException(404, detail="HITL is disabled. Set USE_HITL=true and restart.")
-    if not _Singleton.ready or _Singleton.pipe is None:
+    if not _Singleton.ready or _default_pipe() is None:
         raise HTTPException(503, detail="Pipeline not ready")
 
 
@@ -268,9 +489,13 @@ def _enrich_pending(entry: Dict[str, Any]) -> Dict[str, Any]:
     # recompute as a defence-in-depth fallback (e.g. pre-Phase-D paused
     # threads recovered from SQLite checkpointer).
     required = entry.get("required_roles") or required_roles_for(drivers, purchase)
+    session_key = _Singleton.thread_to_session.get(thread_id)
+    session_id = session_key[1] if session_key else None
+    domain = session_key[0] if session_key else None
     return {
         **entry,
-        "session_id": _Singleton.thread_to_session.get(thread_id),
+        "session_id": session_id,
+        "domain": domain,
         "required_roles": list(required),
         "maker_user_id": entry.get("maker_user_id"),
     }
@@ -301,7 +526,7 @@ def my_approvals(
     #   * my_pending      — items the user *submitted* (maker side)
     #   * pending_for_me  — items the user is *authorised to action* (checker
     #                       side: role ∈ required_roles AND maker-lock clear)
-    all_pending = _Singleton.pipe.pending_approvals()
+    all_pending = _default_pipe().pending_approvals()
     my_pending: List[Dict[str, Any]] = []
     pending_for_me: List[Dict[str, Any]] = []
     for entry in all_pending:
@@ -376,7 +601,7 @@ def list_pending_approvals(
     user: Optional[UserRecord] = Depends(get_optional_user),
 ) -> Dict[str, Any]:
     _require_hitl()
-    pending = _Singleton.pipe.pending_approvals()
+    pending = _default_pipe().pending_approvals()
     enriched = [_enrich_pending(entry) for entry in pending]
     # If the caller is authenticated, surface a per-item "can_i_approve" flag
     # so the UI can grey out items they can't action.
@@ -395,7 +620,7 @@ def get_approval(
     user: Optional[UserRecord] = Depends(get_optional_user),
 ) -> Dict[str, Any]:
     _require_hitl()
-    entry = _Singleton.pipe.get_pending_approval(thread_id)
+    entry = _default_pipe().get_pending_approval(thread_id)
     if entry is None:
         raise HTTPException(404, detail=f"No pending approval for thread {thread_id}")
     enriched = _enrich_pending(entry)
@@ -420,7 +645,7 @@ def resume_approval(
     match the maker's (segregation of duties).
     """
     _require_hitl()
-    pending = _Singleton.pipe.get_pending_approval(thread_id)
+    pending = _default_pipe().get_pending_approval(thread_id)
     if pending is None:
         raise HTTPException(404, detail=f"No pending approval for thread {thread_id}")
 
@@ -456,11 +681,11 @@ def resume_approval(
         "approver": user.display_name or user.user_id,
     })
 
-    session_id = _Singleton.thread_to_session.get(thread_id)
-    if session_id is None or session_id not in _Singleton.sessions:
+    session_key = _Singleton.thread_to_session.get(thread_id)
+    if session_key is None or session_key not in _Singleton.sessions:
         # Resume detached from any session — still works, just no chat-thread update.
         try:
-            result = _Singleton.pipe.resume_diagnostic(thread_id, effective_decision.dict())
+            result = _default_pipe().resume_diagnostic(thread_id, effective_decision.dict())
         except Exception as exc:
             logger.exception("Detached resume failure on thread %s", thread_id)
             raise HTTPException(500, detail=f"Resume error: {exc!r}") from exc
@@ -475,11 +700,12 @@ def resume_approval(
             "approver_role": user.role,
         }
 
-    lock = _get_session_lock(session_id)
+    domain, session_id = session_key
+    lock = _get_session_lock(domain, session_id)
     with lock:
-        state = _Singleton.sessions[session_id]
+        state = _Singleton.sessions[session_key]
         try:
-            _Singleton.agent.apply_resolution(state, thread_id, effective_decision.dict())
+            _Singleton.agents[domain].apply_resolution(state, thread_id, effective_decision.dict())
         except Exception as exc:
             logger.exception("Resume failure on thread %s", thread_id)
             raise HTTPException(500, detail=f"Resume error: {exc!r}") from exc
@@ -490,6 +716,7 @@ def resume_approval(
         new_turns = state.turns[-6:]
         return {
             "session_id": session_id,
+            "domain": domain,
             "thread_id": thread_id,
             "new_turns": [serialize_turn(t) for t in new_turns],
             "state": serialize_state(state),

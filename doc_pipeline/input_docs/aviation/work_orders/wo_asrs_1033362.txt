@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1033362
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+cirrus pilot experiences a rough running engine while at 7,000 ft on an ifr flight plan and turns immediately toward a suitable airport then informs atc. after 30 seconds the engine smooths out and the reporter elects to continue to destination. after landing a faulty magneto is determined to be the cause of the engine anomalies.
+
+## Resolution
+To continue or to land immediately in this situation, that is the question. From 7,000 FT many airports are reachable with the engine stopped so the the decision to continue was not unreasonable and the remaining flight time was roughly 20 minutes. Keeping suitable diversion airports continuously in mind would have been desirable though.

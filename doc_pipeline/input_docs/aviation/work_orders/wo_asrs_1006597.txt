@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1006597
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a maintenace manager observed contract fuelers not in compliance with company procedures during the fueling operations of a company a320.
+
+## Resolution
+Apparently the Contracted Aircraft Fueling provider needs to implement an emergency training or recurrent training for all their Fuelers, to avoid a potentially major liability involving aircraft and people. Especially if a fuel fire should erupt as a result of an electrical static discharge during fueling caused by premature disconnection of the fuel ground bonding cable.

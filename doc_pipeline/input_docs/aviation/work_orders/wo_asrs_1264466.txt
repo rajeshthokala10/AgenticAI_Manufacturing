@@ -1,0 +1,11 @@
+Work Order: wo:asrs:1264466
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+after a steep and fast approach, a c210 pilot reports initiating a go around and retracting the gear. shortly after, the engine quits. with insufficient time to extend the gear, a belly landing ensues on the remaining runway.
+
+## Resolution
+During the approach to landing, I decided that I was too fast to land so I initiated a go around procedure. I applied the power and then retracted the gear. After retracting the gear the engine quit producing power. I was too low to extend the gear again and running out of room on the runway. I elected to land the aircraft with the gear up to minimize damage. After the incident I looked at the aircraft logbooks and realized the annual was due in March and I thought it was due in May. 
+
+The corrective action includes but not limited to using a calendar with reminders to jointly inform the maintenance facility and myself to alert us to when action is required. The corrective action to reduce the risk of landing an aircraft with the gear up is to wait for a longer period after applying power for a go around procedure to retract the gear in case of engine failure.

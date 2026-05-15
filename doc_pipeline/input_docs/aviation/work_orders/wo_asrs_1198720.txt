@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1198720
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a pa-39 engine with 250 hours on the heads suffered a catastrophic cylinder failure when one separated from the crankcase in flight. an emergency was declared, the engine shutdown and a safe landing followed at a nearby airport.
+
+## Resolution
+Analyst says great job by this pilot. Hopefully, the Maintenance Facility will bear the cost of this repair.

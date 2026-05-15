@@ -1,0 +1,9 @@
+Work Order: wo:asrs:274652
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plt of an sma twin engine inadvertently entered class b airspace when returning to land due an engine prob.
+
+## Resolution
+OIL FLOWING OUT R ENG. CALLED RBD TWR AND ADVISED THEM OF MY SIT, AND THAT I WAS RETURNING RBD. THEY ASKED IF I WAS DECLARING AN EMER AND I SAID 'NO.' SUGGESTED VECTORS WERE GIVEN. BUT, I MAY HAVE ENTERED CTLED AIRSPACE FOR DAL 'DALLAS LOVE.'

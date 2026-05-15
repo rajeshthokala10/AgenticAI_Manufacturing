@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1101709
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+at-6 pilot reports possible fuel starvation at 4,500 feet and after switching tanks, turns toward a nearby airport. the wobble pump is used during approach and the engine resumes normal operation, but the approach is continued to landing.
+
+## Resolution
+Properly handled. Fuel was apparently the issue, but even though an error was made with the fuel selector, it is not clear why.

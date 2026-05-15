@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1140015
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c150 instructor pilot experiences engine failure at 2,000 ft and lands safely in a corn field.
+
+## Resolution
+This is a relatively new flight instructor but the emergency was handled very professionally. Kudos.

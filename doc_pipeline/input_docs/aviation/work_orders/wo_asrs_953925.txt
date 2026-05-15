@@ -1,0 +1,9 @@
+Work Order: wo:asrs:953925
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa12 pilot experiences engine failure at 1,500 ft and lands safely on a dirt road.
+
+## Resolution
+Apparently well handled and no damage resulted.

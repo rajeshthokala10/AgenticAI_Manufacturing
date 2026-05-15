@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1043135
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+be36 pilot reports checking notam's for hot online prior to departure and finding nothing to depart. at some point during the flight the fuel gauges are determined to be inoperative and calculations indicate that fuel will be tight. upon contacting hot unicom the reporter is advised that the airport is closed for a balloon festival. when the low fuel situation is announced a runway is made available but the faa is waiting at the ramp.
+
+## Resolution
+It is not clear if the NOTAM was not issued or just missed by the reporter. With the other arriving aircraft also unaware of the NOTAM the former seems more likely. It is also not clear when the fuel gauge problem became apparent but it seems that diverting for fuel may have been advisable.

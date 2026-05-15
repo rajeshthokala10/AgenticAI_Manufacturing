@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1167341
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+when their left engine failed to start the flight crew of a b737ng consulted the mel and utilized a procedure therein and successfully started the engine. while enroute they determined they may have used an inappropriate procedure for the situation. after landing maintenance advised their chosen procedures were, in fact, appropriate.
+
+## Resolution
+It is oftentimes true that MEL procedures are best interpreted by maintenance personnel because, historically, it is their experiential knowledge base that is the intended target.  The relatively recent decision to allow flight crews to make operational decisions based on reference to the MEL has, on occasion, resulted in inappropriate actions being taken.  Glad it worked out right this time.

@@ -296,23 +296,83 @@ _PATTERN_GROUPS: list[tuple[list[tuple[str, str]], callable, bool]] = [
 ]
 
 
+def _schema_clarifier(domain: str | None) -> dict | None:
+    """Pull the ``clarifier:`` block (if any) from ``schemas/<domain>.yaml``.
+
+    Lets a domain ship its own equipment regexes / supplier / metric /
+    department dictionaries without touching this file.
+    """
+    if not domain:
+        return None
+    try:
+        from config import schema_path
+        import yaml as _yaml
+        raw = _yaml.safe_load(schema_path(domain).read_text()) or {}
+    except Exception:
+        return None
+    return raw.get("clarifier") if isinstance(raw, dict) else None
+
+
 class EntityExtractor:
-    """Regex + dictionary-based entity extractor for manufacturing domain."""
+    """Regex + dictionary-based entity extractor. Manufacturing defaults
+    plus optional per-domain extras from ``schemas/<domain>.yaml`` →
+    ``clarifier`` block."""
+
+    def __init__(self, domain: str | None = None):
+        # Start from the manufacturing defaults so today's behaviour stays
+        # identical. Schema entries are appended / merged below.
+        self.equipment_patterns = list(EQUIPMENT_PATTERNS)
+        self.part_number_patterns = list(PART_NUMBER_PATTERNS)
+        self.supplier_names = dict(SUPPLIER_NAMES)
+        self.metric_names = dict(METRIC_NAMES)
+        self.department_names = dict(DEPARTMENT_NAMES)
+
+        extras = _schema_clarifier(domain)
+        if extras:
+            for entry in extras.get("equipment_patterns") or []:
+                # Each entry is ``{pattern, type}`` — re-uses the same
+                # (regex, entity_type) tuple shape EntityExtractor uses.
+                if isinstance(entry, dict) and entry.get("pattern"):
+                    self.equipment_patterns.append(
+                        (str(entry["pattern"]), str(entry.get("type", "equipment_id"))),
+                    )
+            for entry in extras.get("part_number_patterns") or []:
+                if isinstance(entry, dict) and entry.get("pattern"):
+                    self.part_number_patterns.append(
+                        (str(entry["pattern"]), str(entry.get("type", "part_number"))),
+                    )
+            for k, v in (extras.get("supplier_names") or {}).items():
+                self.supplier_names[str(k).lower()] = str(v)
+            for k, v in (extras.get("metric_names") or {}).items():
+                self.metric_names[str(k).lower()] = str(v)
+            for k, v in (extras.get("department_names") or {}).items():
+                self.department_names[str(k).lower()] = str(v)
+
+        # Per-instance pattern groups (mirrors the module-level list).
+        self._pattern_groups = [
+            (self.equipment_patterns,   _norm_upper_dash,    False),
+            (self.part_number_patterns, _norm_upper_nospace, False),
+            (PLANT_PATTERNS,            _norm_title,         False),
+            (STANDARD_PATTERNS,         _norm_upper,         False),
+            (DATE_PATTERNS,             _norm_strip,         True),
+            (MATERIAL_PATTERNS,         _norm_title,         True),
+            (SEVERITY_PATTERNS,         _norm_title,         True),
+        ]
 
     def extract(self, query: str) -> list[ExtractedEntity]:
         entities: list[ExtractedEntity] = []
 
-        for patterns, normalizer, use_full_match in _PATTERN_GROUPS:
+        for patterns, normalizer, use_full_match in self._pattern_groups:
             entities.extend(self._extract_patterns(query, patterns, normalizer, use_full_match))
 
         entities.extend(self._extract_dictionary(
-            query, SUPPLIER_NAMES, entity_type="supplier", word_boundary=False,
+            query, self.supplier_names, entity_type="supplier", word_boundary=False,
         ))
         entities.extend(self._extract_dictionary(
-            query, METRIC_NAMES, entity_type="metric", word_boundary=True,
+            query, self.metric_names, entity_type="metric", word_boundary=True,
         ))
         entities.extend(self._extract_dictionary(
-            query, DEPARTMENT_NAMES, entity_type="department",
+            query, self.department_names, entity_type="department",
             word_boundary=True, first_only=True,
         ))
 
@@ -573,9 +633,10 @@ class ClarifierAgent:
         # result.entities → [metric: OEE, plant: Plant A, time_period: Q1]
     """
 
-    def __init__(self):
+    def __init__(self, domain: str | None = None):
+        self.domain = domain
         self.intent_classifier = IntentClassifier()
-        self.entity_extractor = EntityExtractor()
+        self.entity_extractor = EntityExtractor(domain=domain)
         self.slot_filler = SlotFiller()
 
     def analyze(self, query: str) -> ClarifierResult:

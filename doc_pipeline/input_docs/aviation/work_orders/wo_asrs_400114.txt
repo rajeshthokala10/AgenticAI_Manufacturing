@@ -1,0 +1,9 @@
+Work Order: wo:asrs:400114
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+ltt cpr aircraft prior to taxi wasn't fueled and rptr plt accepted the aircraft because he had been briefed by previous plt that a fuel gauge was inaccurate. thus, he assumed the fuel load anomaly was due to the gauge.
+
+## Resolution
+BEFORE DEPARTING ON THE FLT, I WAS TOLD ABOUT A SUSPECTED FUEL GAUGE MALFUNCTION. IT WAS ALSO MY UNDERSTANDING THAT THE ACFT HAD BEEN REFUELED. THE FUEL GAUGES READ LOW WHEN I TURNED ON THE BATTERY, BUT I DISCOUNTED THIS TO THE SUSPECTED MALFUNCTION, AND I WAS CONFIDENT THE OUTBOARDS HAD BEEN TOPPED OFF. ON THE SECOND LEG OF THE 2 LEG FLT, THE R ENG FLAMED. I LANDED AT JAMESTOWN AND WHEN I REFUELED, I REALIZED THE ACFT HAD NOT BEEN REFUELED PRIOR TO THE FIRST FLT. PRIMARY CAUSE WAS MISCOM.

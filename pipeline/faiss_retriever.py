@@ -1,10 +1,15 @@
 """
-FAISS-backed VectorRetriever for the unified pipeline.
+Qdrant-backed VectorRetriever for the unified pipeline.
 
-Drop-in replacement for core/retrieval/vector_retriever.VectorRetriever that
-reuses the FAISS index built by doc_pipeline.embeddings.EmbeddingPipeline,
-so we have ONE vector store across the whole system instead of duplicating
-embeddings in ChromaDB.
+Drop-in replacement for ``core.retrieval.vector_retriever.VectorRetriever``
+(legacy ChromaDB) that reuses the single Qdrant collection built by
+``doc_pipeline.embeddings.EmbeddingPipeline``. One vector store across the
+whole system instead of duplicate embeddings.
+
+The file is named ``faiss_retriever.py`` for historical reasons — the index
+was originally FAISS-backed. The class name is now ``QdrantVectorRetriever``
+and ``FaissVectorRetriever`` is kept as an alias so existing call-sites keep
+importing the symbol they already had.
 """
 
 from __future__ import annotations
@@ -12,26 +17,28 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional, Set
 
-logger = logging.getLogger("pipeline.faiss_retriever")
+logger = logging.getLogger("pipeline.qdrant_retriever")
 
 
-class FaissVectorRetriever:
-    """API-compatible with core.retrieval.vector_retriever.VectorRetriever.
+class QdrantVectorRetriever:
+    """API-compatible with ``core.retrieval.vector_retriever.VectorRetriever``.
 
-    Uses doc_pipeline.embeddings.EmbeddingPipeline as the underlying engine.
+    Uses ``doc_pipeline.embeddings.EmbeddingPipeline`` (which wraps Qdrant)
+    as the underlying engine.
     """
 
     def __init__(self, embedding_pipeline=None):
         from doc_pipeline.embeddings import EmbeddingPipeline
+
         self._docs: List[Dict] = []
         self._id_to_doc: Dict[str, Dict] = {}
         self._embedding_pipeline = embedding_pipeline or EmbeddingPipeline()
 
     def build_index(self, documents: List[Dict]) -> None:
-        """Build the FAISS index from `{chunk_id, text, metadata}` dicts.
+        """Build the Qdrant index from ``{chunk_id, text, metadata}`` dicts.
 
         Note: when the pipeline owner already has a prebuilt EmbeddingPipeline
-        (because doc_pipeline indexed the source chunks), call `attach()` to
+        (because doc_pipeline indexed the source chunks), call ``attach()`` to
         reuse it without re-embedding.
         """
         from doc_pipeline.chunking import Chunk
@@ -86,3 +93,7 @@ class FaissVectorRetriever:
 
         out.sort(key=lambda x: x["vector_score"], reverse=True)
         return out[:top_k]
+
+
+# Back-compat alias — older code imported ``FaissVectorRetriever``.
+FaissVectorRetriever = QdrantVectorRetriever

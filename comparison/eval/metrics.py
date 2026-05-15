@@ -125,13 +125,82 @@ def guardrail_pass(answer: str, evidence_chunks: Iterable[Dict[str, Any]]) -> bo
     return report.verdict == "PASS"
 
 
+# ─── Hard targets (piston-style) ────────────────────────────────────────────
+
+
+def top_cause_match(
+    item: GoldenItem,
+    cause_ranking: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """Boolean check that the top cause from the cause-ranker equals
+    ``item.expected_top_cause``. Returns a dict that includes the predicted
+    value so the report can surface false positives.
+    """
+    expected = (item.expected_top_cause or "").strip()
+    if not expected:
+        return {"applicable": False}
+    candidates = (cause_ranking or {}).get("candidates") or []
+    predicted = ""
+    if candidates:
+        predicted = str(candidates[0].get("cause", "")).strip()
+    return {
+        "applicable": True,
+        "expected": expected,
+        "predicted": predicted,
+        "match": bool(predicted) and predicted.lower() == expected.lower(),
+    }
+
+
+def subsystem_match(
+    item: GoldenItem,
+    clarification: Dict[str, Any] | None,
+    evidence_chunks: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Boolean check that the inferred subsystem matches the gold value.
+
+    The subsystem can come from two surfaces: the clarifier's structured
+    output (``clarification['entities']``) or — as a fallback — the
+    top-ranked evidence chunk's ``metadata.doc_type``. Either match counts.
+    """
+    expected = (item.expected_subsystem or "").strip().lower()
+    if not expected:
+        return {"applicable": False}
+
+    candidates: List[str] = []
+    for ent in (clarification or {}).get("entities") or []:
+        # entities may arrive as tuples (kind, value) or dicts.
+        if isinstance(ent, (list, tuple)) and len(ent) >= 2:
+            candidates.append(str(ent[1]))
+        elif isinstance(ent, dict):
+            candidates.extend(str(v) for v in ent.values())
+    for chunk in evidence_chunks[:3]:
+        meta = chunk.get("metadata") or {}
+        candidates.append(str(meta.get("doc_type") or ""))
+        candidates.append(str(meta.get("source") or ""))
+
+    haystack = " ".join(candidates).lower()
+    return {
+        "applicable": True,
+        "expected": expected,
+        "match": expected in haystack,
+    }
+
+
 def score_record(
     answer: str,
     evidence_chunks: List[Dict[str, Any]],
     item: GoldenItem,
+    *,
+    cause_ranking: Dict[str, Any] | None = None,
+    clarification: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """Aggregate every metric for a single pipeline × item result."""
-    return {
+    """Aggregate every metric for a single pipeline × item result.
+
+    Soft metrics always run. Hard targets (``top_cause_match`` /
+    ``subsystem_match``) only emit numbers when the golden item declared
+    an expectation.
+    """
+    out: Dict[str, Any] = {
         "faithfulness": faithfulness(answer, evidence_chunks),
         "answer_relevancy": answer_relevancy(answer, item),
         "context_precision": context_precision(item, evidence_chunks),
@@ -140,10 +209,26 @@ def score_record(
         "forbidden_violations": forbidden_violations(answer, item),
         "guardrail_pass": guardrail_pass(answer, evidence_chunks),
     }
+    cause_check = top_cause_match(item, cause_ranking)
+    if cause_check.get("applicable"):
+        out["top_cause_match"] = bool(cause_check["match"])
+        out["top_cause_predicted"] = cause_check.get("predicted")
+        out["top_cause_expected"] = cause_check.get("expected")
+    sub_check = subsystem_match(item, clarification, evidence_chunks)
+    if sub_check.get("applicable"):
+        out["subsystem_match"] = bool(sub_check["match"])
+        out["subsystem_expected"] = sub_check.get("expected")
+    return out
 
 
 def aggregate(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Average the numeric metrics + compute pass-rates."""
+    """Average the numeric metrics + compute pass-rates.
+
+    Hard-target metrics (``top_cause_match`` / ``subsystem_match``) are
+    aggregated only over records where the corresponding key is present
+    (i.e. the golden item declared an expectation); the denominator reflects
+    just those records so the rate is meaningful.
+    """
     if not records:
         return {}
     keys_numeric = ["faithfulness", "answer_relevancy", "context_precision",
@@ -158,5 +243,19 @@ def aggregate(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     out["forbidden_violation_rate"] = round(
         sum(1 for r in records if r.get("forbidden_violations")) / len(records), 4
     )
+
+    cause_recs = [r for r in records if "top_cause_match" in r]
+    if cause_recs:
+        out["top_cause_match_rate"] = round(
+            sum(1 for r in cause_recs if r["top_cause_match"]) / len(cause_recs), 4
+        )
+        out["top_cause_match_n"] = len(cause_recs)
+    sub_recs = [r for r in records if "subsystem_match" in r]
+    if sub_recs:
+        out["subsystem_match_rate"] = round(
+            sum(1 for r in sub_recs if r["subsystem_match"]) / len(sub_recs), 4
+        )
+        out["subsystem_match_n"] = len(sub_recs)
+
     out["n"] = len(records)
     return out

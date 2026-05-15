@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1028473
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a be-76 engine lost power after takeoff so the instructor took control, shut the engine down and returned to the airport. a mechanic had failed to secure the magneto after preflight maintenance.
+
+## Resolution
+This pilot did well and they were indeed fortunate that the aircraft was a twin engine machine. Hopefully, the outcome of this was a serious discussion with the Mechanic.

@@ -1,0 +1,15 @@
+Work Order: wo:asrs:1126478
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+after an engine start problem, a phenom 300 captain reported he was uncomfortable with company operation's suggestion to perform a maintenance procedure he did not see in the book.
+
+## Resolution
+SOP for the Phenom 300 is right engine start first followed by left engine.  Whenever possible we use a GPU for the Phenom since we have no APU and we can prepare the avionics for flight in advance.  On first attempt the right engine would not start.  Another crewmember in the Phenom told me that they had this happen to them and they were instructed by the SOC to power down and power back up then try again. Since I knew this was not FAA approved I thought maybe the GPU was causing a problem and we powered down and disconnected the GPU in order to attempt a battery start and see if that would work.   
+
+Upon second attempt with only battery power (in case the GPU was malfunctioning) we still got no start on the right engine.  When we switched from GPU to battery power we started the left engine first and had no problem with the start of the left. When I called MCC to report the problem I immediately got feedback that we had seen several other instances of this and that crews had been successful powering down and powering back up.  I told them we shifted to battery power only and had powered down for that transition.  They asked if I was "comfortable" pulling the battery.  I told them that in the Phenom we don't pull the battery ever.  There are two main batteries and only one is accessible to the crew but it would be abnormal for the crew to pull it and thus it should be a Maintenance function.  
+
+He did not pushback hard on this but I could tell he was a bit annoyed.  I did ask him for a procedure and he said he could not produce one.  When Maintenance did come out to the aircraft (very quickly) we talked with them and they checked the ignition system first which worked properly and then they started the right engine with no problem.  During the discussion I was told that MCC is going to start asking crews to pull the battery regularly to fix this condition. 
+
+My concern is that outside an FAA approved procedure MCC asking crews to do something not only masks the problem and us ever getting a real resolution for it but also puts the crew in a precarious situation.  They are being asked to do something which by my estimation is NOT FAA approved in that they are correcting a Maintenance Irregularity without any documentation (make no mistake that is what MCC was asking).  This could potentially mean that after several months of not having any indication (in writing) that this is a problem we have a much riskier failure occur.  For example, maybe the "bug" causing this problem causes a problem in flight or worse at or after takeoff.  MCC also said there was some problem in the GCU (Generator Control Unit) but my impression was that nothing, other than rationalizing resetting the power to clear it, was being done.

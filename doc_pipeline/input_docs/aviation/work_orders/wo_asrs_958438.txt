@@ -1,0 +1,9 @@
+Work Order: wo:asrs:958438
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa25 experienced an engine seizure at 800 ft during a glider tow. the glider releases and the reporter is able to land opposite direction on the departure runway.
+
+## Resolution
+Perhaps a full power check on the ground would have revealed the vibration. Towing operations are very hard on air cooled engines which shortens their life expectancy. With oil dripping from the cowl it is likely there is a rod through the crankcase.

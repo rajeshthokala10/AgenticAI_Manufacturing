@@ -1,0 +1,9 @@
+Work Order: wo:asrs:519674
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+mooney m20p plt lost pwr and asked approach ctl to guide him to the nearest arpt to make an emer forced landing his vision was limited during landing due the windshield covered with engine oil and he ran off the end of the runway the aircraft sustained damage to the prop and the nosewheel collapsed.
+
+## Resolution
+I WAS ON AN IFR FLT PLAN FROM GRI TO 04Y. DSNDING FROM 9000 FT ENRTE INTO 04Y, THE ENG STARTED TO VIBRATE. I INFORMED FAR APCH ABOUT ENG FAILURE. THEY VECTORED ME TO WAHPETON, ND, ARPT. WITH SOME SMALL AMOUNT OF ENG PWR, I ARRIVED OVER THE ARPT AROUND 4000 FT. I THEN CIRCLED DOWN TO LAND, BUT HAD EXCESS AIRSPD, BOUNCED ON LNDG AND AFTER FINAL TOUCHDOWN RAN OUT OF RWY. STOPPED IN OVERRUN AREA WITH NOSEWHEEL COLLAPSED AND PROP STRIKE. AFTER LNDG, A CRACK IN THE ENG CASE WAS FOUND. THE WINDSHIELD WAS COVERED WITH OIL WHICH WAS ALSO A FACTOR.

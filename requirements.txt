@@ -4,19 +4,23 @@ networkx>=3.0
 rank-bm25>=0.2.2
 pandas>=2.0.0
 openpyxl>=3.1.0
-sentence-transformers>=2.2.0
+sentence-transformers>=3.0.0,<4.0  # 4.x+ depends on torchcodec, which needs libnvrtc on this host
 scikit-learn>=1.3.0
 numpy>=1.24.0
 tiktoken>=0.5.0
 pdfplumber>=0.10.0
 plotly>=5.18.0
 python-dotenv>=1.0.0
-faiss-cpu>=1.7.4
 reportlab>=4.0.0
 # FastAPI backend that powers the Next.js Claude-style chat UI
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
+pydantic-settings>=2.4.0
+# YAML for the declarative KG schema (schemas/manufacturing.yaml).
+pyyaml>=6.0
+# Qdrant — primary vector store (embedded on-disk by default, or remote via QDRANT_URL).
+qdrant-client>=1.11.0
 # LangGraph orchestration (state-graph wrapper over retrieval + critic loop).
 # Pulls langchain-core as a transitive dep — we list it explicitly for clarity.
 langgraph>=0.2.0
@@ -24,9 +28,8 @@ langchain-core>=0.3.0
 # Durable checkpointer for the HITL approval gate. Required when
 # HITL_CHECKPOINT_BACKEND=sqlite (the default for production).
 langgraph-checkpoint-sqlite>=2.0.0
-# Optional: ChromaDB-backed vector retriever (FAISS is the default).
+# Optional fallback to the legacy FAISS index (USE_LEGACY_FAISS=true). Keep
+# pinned so old saved indexes can still be loaded for migrations.
+# faiss-cpu>=1.7.4
+# Optional: ChromaDB-backed vector retriever (Qdrant is the default).
 # chromadb>=0.4.0
-# Optional: cross-encoder reranker (USE_RERANKER=true).
-# Already pulled transitively by `sentence-transformers` above; pinning the
-# top-level dep makes the optional feature explicit.
-# sentence-transformers>=2.2.0 already listed above includes CrossEncoder.

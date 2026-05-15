@@ -7,13 +7,15 @@ Stages
    via doc_pipeline's PDF/TXT/Excel parsers.
 2. Smart-chunk them with the doc_pipeline HybridChunker (semantic / recursive /
    sliding window per file type).
-3. Embed + index with FAISS (doc_pipeline.embeddings).
+3. Embed (bge-small-en-v1.5 by default) and index with Qdrant
+   (``doc_pipeline.embeddings.EmbeddingPipeline``).
 4. Build the knowledge graph (core/knowledge_graph.py) from chunk metadata.
 5. At query time:
-   * Quick mode      → Clarifier + QueryCorrector + FAISS top-k.
-   * Diagnostic mode → Clarifier + Hybrid (BM25 + FAISS + Graph + RRF)
-                       + LLM answer + Critic loop (if OPENAI_API_KEY set).
-   * Classical RAG   → FAISS only + LLM answer (baseline for comparison).
+   * Quick mode      → Clarifier + QueryCorrector + Qdrant top-k.
+   * Diagnostic mode → Clarifier + Hybrid (BM25 + Qdrant + Graph + RRF)
+                       + bge-reranker + LLM answer + Critic loop
+                       (if OPENAI_API_KEY set).
+   * Classical RAG   → Qdrant only + LLM answer (baseline for comparison).
    * Direct LLM      → no retrieval (baseline for comparison).
 """
 
@@ -24,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 logger = logging.getLogger("pipeline.unified")
 
@@ -46,6 +48,7 @@ class PipelineResult:
     correction: Optional[Any] = None
     graph_context: Optional[Dict] = None
     cause_ranking: Optional[Dict] = None
+    procedure: Optional[Dict] = None
     critic: Optional[Dict] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
     formatted_output: str = ""
@@ -73,6 +76,7 @@ class PipelineResult:
             "evidence": self.evidence,
             "graph_context": self.graph_context,
             "cause_ranking": self.cause_ranking,
+            "procedure": self.procedure,
             "critic": self.critic,
             "metrics": self.metrics,
             "formatted_output": self.formatted_output,
@@ -95,6 +99,24 @@ class PipelineResult:
         return out
 
 
+_PIPELINE_CACHE: Dict[str, "ManufacturingPipeline"] = {}
+
+
+def get_pipeline(domain: Optional[str] = None) -> "ManufacturingPipeline":
+    """Return the cached pipeline for ``domain``, building one on first call.
+
+    Two domains share heavy ML models (embedder, reranker) via the
+    process-wide cache so a second pipeline is cheap to construct.
+    """
+    from config import normalize_domain
+    d = normalize_domain(domain)
+    pipe = _PIPELINE_CACHE.get(d)
+    if pipe is None:
+        pipe = ManufacturingPipeline(domain=d)
+        _PIPELINE_CACHE[d] = pipe
+    return pipe
+
+
 class ManufacturingPipeline:
     """Single end-to-end pipeline for ingestion, indexing, and querying."""
 
@@ -103,17 +125,29 @@ class ManufacturingPipeline:
         input_dirs: Optional[Iterable[Path | str]] = None,
         index_dir: Optional[Path | str] = None,
         embedding_model: Optional[str] = None,
+        domain: Optional[str] = None,
     ):
         from config import (
             INPUT_DOCS_DIR, PDF_DIR, EXCEL_DIR, VECTOR_STORE_DIR,
-            EMBEDDING_MODEL, ensure_dirs,
+            EMBEDDING_MODEL, ensure_dirs, normalize_domain, input_dir,
         )
         ensure_dirs()
 
-        self.input_dirs: List[Path] = [
-            Path(p) for p in (input_dirs or [INPUT_DOCS_DIR, PDF_DIR, EXCEL_DIR])
-            if Path(p).exists()
-        ]
+        # Per-domain state — the schema, KG file, Qdrant collection and
+        # input directory all key off ``self.domain``.
+        self.domain: str = normalize_domain(domain)
+
+        # When no explicit input_dirs override is given, default to the
+        # domain's own ingestion folder. Legacy data/ folders are only added
+        # for the manufacturing domain (back-compat with existing layouts).
+        if input_dirs is None:
+            default_inputs: List[Path] = [input_dir(self.domain)]
+            if self.domain == "manufacturing":
+                default_inputs += [PDF_DIR, EXCEL_DIR]
+            self.input_dirs = [Path(p) for p in default_inputs if Path(p).exists()]
+        else:
+            self.input_dirs = [Path(p) for p in input_dirs if Path(p).exists()]
+
         self.index_dir = Path(index_dir or VECTOR_STORE_DIR)
         self.embedding_model = embedding_model or EMBEDDING_MODEL
 
@@ -125,11 +159,13 @@ class ManufacturingPipeline:
 
         self.ingestion = DocumentIngestion()
         self.embedding_pipeline = EmbeddingPipeline(
-            model_name=self.embedding_model, index_dir=self.index_dir,
+            model_name=self.embedding_model,
+            index_dir=self.index_dir,
+            domain=self.domain,
         )
         self.chunker = HybridChunker(embedding_model=self.embedding_pipeline.get_model())
-        self.clarifier = ClarifierAgent()
-        self.query_corrector = QueryCorrector()
+        self.clarifier = ClarifierAgent(domain=self.domain)
+        self.query_corrector = QueryCorrector(domain=self.domain)
 
         self.documents: List[Dict] = []
         self.kg = None
@@ -160,9 +196,9 @@ class ManufacturingPipeline:
         # so the KG / BM25 layers have the right shape.
         self._materialize_core_documents()
 
-        # Knowledge graph
+        # Knowledge graph (per-domain schema + KG file)
         from core.knowledge_graph import KnowledgeGraph
-        self.kg = KnowledgeGraph()
+        self.kg = KnowledgeGraph(domain=self.domain)
         if not rebuild and self.kg.load():
             logger.info("Loaded knowledge graph (%d nodes, %d edges)",
                         self.kg.graph.number_of_nodes(), self.kg.graph.number_of_edges())
@@ -170,9 +206,11 @@ class ManufacturingPipeline:
             logger.info("Building knowledge graph...")
             self.kg.build_from_documents(self.documents)
 
-        # FAISS-backed vector retriever shared by orchestrator & classical RAG
-        from pipeline.faiss_retriever import FaissVectorRetriever
-        self.faiss_retriever = FaissVectorRetriever(embedding_pipeline=self.embedding_pipeline)
+        # Qdrant-backed vector retriever shared by orchestrator & classical RAG.
+        # Variable name kept as ``faiss_retriever`` for back-compat with the
+        # existing call-sites; the class itself is now ``QdrantVectorRetriever``.
+        from pipeline.faiss_retriever import QdrantVectorRetriever
+        self.faiss_retriever = QdrantVectorRetriever(embedding_pipeline=self.embedding_pipeline)
         self.faiss_retriever.attach(self.embedding_pipeline, self.documents)
 
         # Decide LLM availability
@@ -215,9 +253,17 @@ class ManufacturingPipeline:
         self.embedding_pipeline.save()
 
     def _materialize_core_documents(self) -> None:
-        """Turn doc_pipeline Chunks into the core dict shape (with entity metadata)."""
+        """Turn doc_pipeline Chunks into the core dict shape (with entity metadata).
+
+        ``domain`` is passed to the adapter so it can union the schema's
+        Equipment id_pattern with the legacy regex — every domain's asset
+        tags get auto-lifted into ``metadata.equipment_ids`` without any
+        Python edits to ``pipeline/adapter.py``.
+        """
         from pipeline.adapter import chunks_to_core_docs
-        self.documents = chunks_to_core_docs(self.embedding_pipeline.chunks)
+        self.documents = chunks_to_core_docs(
+            self.embedding_pipeline.chunks, domain=self.domain,
+        )
         logger.info("Materialized %d core documents", len(self.documents))
 
     def _build_orchestrator(self, use_langgraph: bool):
@@ -361,6 +407,61 @@ class ManufacturingPipeline:
 
         return self._wrap_diagnostic_result(query, result, clarification, correction)
 
+    def diagnostic_stream(
+        self,
+        query: str,
+        thread_id: Optional[str] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """Stream per-node updates from the diagnostic pipeline.
+
+        Requires the LangGraph orchestrator (``USE_LANGGRAPH=true``). The
+        procedural orchestrator does not expose intermediate states.
+
+        Each yielded item matches the contract emitted by
+        :meth:`LangGraphOrchestrator.stream_query`:
+
+        * ``{"event": "node_update", "node": "...", "update": {...}}``
+        * ``{"event": "complete", "response": {...}}``     — terminal, success
+        * ``{"event": "interrupted", "response": {...}}``  — HITL pause
+        """
+        self._require_ready()
+        if not self._llm_enabled or self.orchestrator is None:
+            raise RuntimeError("Diagnostic streaming requires OPENAI_API_KEY.")
+        if self._orchestrator_engine != "langgraph":
+            raise RuntimeError(
+                "Diagnostic streaming requires the LangGraph orchestrator. "
+                "Set USE_LANGGRAPH=true."
+            )
+        if not hasattr(self.orchestrator, "stream_query"):
+            raise RuntimeError("Active orchestrator does not support streaming.")
+
+        clarification = self.clarifier.analyze(query)
+        correction = self.query_corrector.correct(query)
+        enriched = clarification.enriched_query if clarification.entities else correction.corrected
+
+        # Emit the pre-LangGraph stages first so the UI has progress before
+        # the StateGraph spins up.
+        yield {
+            "event": "node_update",
+            "node": "clarify",
+            "update": {
+                "intent": clarification.intent.value,
+                "entities": [(e.entity_type, e.normalized) for e in clarification.entities],
+                "is_complete": clarification.is_complete,
+            },
+        }
+        yield {
+            "event": "node_update",
+            "node": "correct",
+            "update": {
+                "corrected": correction.corrected,
+                "expanded": correction.expanded,
+                "corrections_applied": correction.corrections_applied,
+            },
+        }
+
+        yield from self.orchestrator.stream_query(enriched, thread_id=thread_id)
+
     def resume_diagnostic(
         self,
         thread_id: str,
@@ -439,6 +540,7 @@ class ManufacturingPipeline:
             correction=correction,
             graph_context=result.get("graph_context"),
             cause_ranking=result.get("cause_ranking"),
+            procedure=result.get("procedure"),
             critic=result.get("critic"),
             metrics=result.get("metrics", {}),
             formatted_output="",

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1093765
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c421 pilot noted the number 4 cylinder running significantly cooler than normal. maintenance subsequently found two number 4 cylinder hold down bolts sheared in addition to a small crankcase crack.
+
+## Resolution
+It is interesting that no oil leak was seen. In any event, that engine would pretty much need to be pulled.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1196801
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+helicopter pilot experiences a power loss during initial climb and elects to land in a parking lot. the engine anomaly appears to clear up during descent but the approach is continued to landing as a precaution. visual inspection on the ground reveals no anomalies and the helicopter is flown back to base.
+
+## Resolution
+After having made an emergency landing in a mall parking lot due to an engine anomaly, flying back to base without a maintenance inspection and sign off appears rather cavalier.

@@ -1,0 +1,13 @@
+Work Order: wo:asrs:845179
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an a320 captain reports an ignition a fault during second engine start attempt after long single engine taxi. first officer examined qrh and says second start attempt ok. enroute the captain discoverd that the first officer used manual start procedure from the qrh and questions his own failure to put the ignition failure in the log.
+
+## Resolution
+During taxi out...attempting to start engine number two the First Officer got an ignition A fault..auto shutdown...she extinguished the warning light..monitored the auto shutdown...then got out the QRH and said..."OK to attempt a restart"...restart attempted successfully.  ACARS messages sent to Dispatch including one stating the fault and one saying restart complete.  No further instructions from Dispatch or Maintenance.  
+
+Looking back, I feel I should have written up in the log that there was a fault and it should have been MEL'ed (assuming that's OK) before the next flight.  During climb out I asked her what she found in the QRH and reviewed that..it was for a fault in manual mode..not automatic.  Somewhat weak verbal communications re: the fault information being used from the QRH.  Some self induced on time pressure with this happening during a major bank pushback.
+
+We had a full airplane and the cockpit temperature showed 92 degrees, very hot..had a jumpseater...taxing along with the entire fleet, taxiway gridlock. I was distracted taxing the airplane while she handled the problem. Maybe the First Officer, while taxiing, should read aloud what they have found in the QRH and the name of the procedure they are following...had she of read "engine fault - manual mode" we probably would have pulled over...(huge lineup on taxiway)..contacted Maintenance and either returned to the gate...or followed other instructions from them.  I assumed the First Officer found the correct procedure to follow and followed it, she did not appear concerned.    GET THE DIRECT RADIO COMMUNICATIONS WITH MAINTENANCE BACK....THE ACARS IS TOO SLOW...AND GOING THROUGH DISPATCH IS ANOTHER UNNECESSARY LINK IN THE CHAIN.

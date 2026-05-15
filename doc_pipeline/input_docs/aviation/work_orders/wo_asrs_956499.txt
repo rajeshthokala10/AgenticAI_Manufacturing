@@ -1,0 +1,9 @@
+Work Order: wo:asrs:956499
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+be55 pilot reports multiple attempts to start both engines using normal start procedures. the left engine eventually starts but the right engine does not and catches fire. a fire extinguisher is used to put the fire out.
+
+## Resolution
+The reporter appears to be relatively new to this aircraft and may not have experienced the hot 4,000 FT elevation that existed during these start attempts. If the aircraft had flown recently and the engines were still warm then very little priming may have been necessary for start.

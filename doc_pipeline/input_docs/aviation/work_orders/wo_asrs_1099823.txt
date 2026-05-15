@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1099823
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c182 pilot reports a rough running engine with zero oil pressure and the decision to land in a cornfield. no damage and no injuries were reported.
+
+## Resolution
+Although fuel was much discussed in this report it appears that lack of oil pressure was the cause of the rough engine. Good judgement was used to land in the cornfield and not attempt to fly over the obstacles on the approach to the runway.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1093744
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+after a c172 engine made an unusual sound during climbout, so the instructor declared an emergency and returned to the departure airport where he found a single magneto selected although the key appeared to point to the both position.
+
+## Resolution
+Good decision. From the right seat parallax across the cockpit does change the appearance of some selectors and gauges.

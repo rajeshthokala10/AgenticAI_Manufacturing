@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1104845
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pilot of a newly restored ercoupe reports engine failure at 1,200 ft on departure and is able to land safely, opposite direction on the departure runway.
+
+## Resolution
+Professionally handled, saving a freshly restored vintage aircraft.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1057479
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+when the right engine of their pa-31 started to surge and display increasing oil and cylinder head temperatures the flight crew performed an in-flight shutdown, declared an emergency with atc, and diverted to the nearest suitable airport.
+
+## Resolution
+An appropriate response.  Well done.

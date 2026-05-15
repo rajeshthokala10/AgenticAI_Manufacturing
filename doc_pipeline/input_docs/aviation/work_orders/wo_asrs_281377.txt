@@ -1,0 +1,9 @@
+Work Order: wo:asrs:281377
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pax rpt regarding forced landing due to engine failure.
+
+## Resolution
+ENG FAILED. REASON WAS UNCLR. ACFT SUCCESSFULLY LANDED IN A FIELD WITH NO DAMAGE OR INJURY.

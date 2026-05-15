@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1082595
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c210 pilot reports losing electrical power during climb to fl190 due to a nearby lightning strike. the engine was being operated at the time with a fuel boost pump on and the mixture adjusted accordingly. when the electrical power failed the pump failed and the engine quickly lost power. cycling the main electric switch restores electrical power and the engine is successfully restarted, allowing the flight to continue destination at lower altitude.
+
+## Resolution
+It is somewhat disconcerting to learn that a C210 electrical failure can cause the engine to fail. It would appear that standard engine failure procedures should have restored engine power before losing 8,000 feet however. Perhaps this engine failure scenario should be presented during training to all pilots of aircraft which might exhibit similar failure phenomena.

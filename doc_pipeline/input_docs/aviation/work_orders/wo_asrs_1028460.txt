@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1028460
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an at502b landed off airport because the fuel quantity and fuel low lights are unreliable during maneuvering flight and on these flights fuel was limited because of large hopper loads. complacency and fatigue were factors.
+
+## Resolution
+This pilot was seriously distracted and probably should have taken the rest of the day off. But, his comments about the fuel system deficiencies are well taken.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:840858
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a mechanic reported a fuel leak was found, on #1 engine of a b737-800, on the first flight after he had changed a hydro mechanical unit (hmu).
+
+## Resolution
+April 2009, I was assigned to change an HMU on #1 engine. Myself, another Mechanic and an RII Inspector took a turnover from swing shift who had the old hydro mechanical unit (HMU) about half way out. We finished the job and did the required leak check and operational tests. No leaks were noted during these checks. The aircraft was then taxied to the gate for departure. Again, there were no leaks at that time. The aircraft flew a leg, and upon arrival it was discovered that the #1 engine had a fuel leak. The Technician there found that 2 bolts were loose on the fuel discharge line from the HMU. He secured the line and released the aircraft back to service. I was notified of this situation in June 2009 by e-mail from my company that the FAA may be initiating a letter of investigation against myself and the RII Inspector. All I can recall from 2 months ago is that we installed the HMU per the Maintenance Manual and all required leak and operational checks were satisfactory.

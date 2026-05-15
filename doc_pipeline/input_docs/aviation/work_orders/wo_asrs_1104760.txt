@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1104760
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c182 pilot reports landing on an intersecting runway to the runway cleared to land on due to a rough running engine. the tower is advised of the situation, but apparently did not hear the transmission and is upset about the cross runway landing.
+
+## Resolution
+Perhaps clearly stating "Mayday" or "Emergency" and announcing intentions, would have prevented the misunderstanding.  Otherwise properly handled.

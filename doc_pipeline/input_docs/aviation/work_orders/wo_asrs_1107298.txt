@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1107298
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+stinson pilot experiences engine vibration and elects to land on a highway as a precaution with no injuries or damage to the aircraft.
+
+## Resolution
+It is not clear that a landing on the highway was necessary, but on the other hand it is always better to be safe than sorry.

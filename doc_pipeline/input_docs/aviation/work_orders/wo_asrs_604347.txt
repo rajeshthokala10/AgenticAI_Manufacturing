@@ -1,0 +1,9 @@
+Work Order: wo:asrs:604347
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b737-300 was dispatched in non compliance with #1 ignition deferred per the mel. special procs for swapping wiring were not accomplished correctly.
+
+## Resolution
+WHILE PERFORMING MEL PROCS ON ACFT #1 ENG, MEL 74-1 IGNITION, I MISIDENTED THE WIRES THAT WERE TO BE REQUIRED BY MEL 74-1, SP-74. APPARENTLY, THIS CAUSED THE AUTO SPD BRAKE NOT TO AUTO ARM (GREEN LIGHT). NO OTHER INDICATIONS WERE NOTED. THE PROB WAS CORRECTED AT THE NEXT STOP.

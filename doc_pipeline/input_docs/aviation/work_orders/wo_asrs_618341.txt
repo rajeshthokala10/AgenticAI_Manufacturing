@@ -1,0 +1,9 @@
+Work Order: wo:asrs:618341
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+during dscnt and leveloff at 8000 ft the flt crew of an md11 cargo flt noted all 3 engine indications matched a flameout condition prior to approach to anc.
+
+## Resolution
+DURING DSCNT AT 8000 FT, AS THE THROTTLES ADVANCED, THERE WAS NO RESPONSE FROM ALL 3 ENGS. OIL PRESSURES WERE 19 PSI (ENG #1), 22 PSI (ENG #2), 19 PSI (ENG #3). THE ENGS WERE INDICATING 35% FOR ALL THREE. THE FMC DSCNT PAGE WAS DISPLAYING 'CONFIRM ENG OUT.' THE CAPT SELECTED ENG IGNITION OVERRIDE AT WHICH TIME ALL 3 ENGS SPOOLED UP. WE DECLARED AN EMER AND LANDED WITHOUT ANY FURTHER PROBS.

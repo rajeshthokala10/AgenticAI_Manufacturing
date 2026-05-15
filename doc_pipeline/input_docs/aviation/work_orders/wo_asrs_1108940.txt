@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1108940
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+air carrier maintenance personnel installed the incorrect engine fuel control unit for the affectivity due to confusion over configuration and service bulletin status.
+
+## Resolution
+A part number check should have been performed by others to confirm the correct part was installed. Also, why was the slow to accelerate condition not detected in the post maintenance engine runs?

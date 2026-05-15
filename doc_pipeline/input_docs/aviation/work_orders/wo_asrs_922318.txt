@@ -1,0 +1,11 @@
+Work Order: wo:asrs:922318
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a line mechanic reports deferring a flight crew write-up about not getting an ecam display: circuit breaker tripped rear pnl warning on an a320. maintenance controller advised him to use mel 74-31-03, even though that mel only states that an ecam caution ignition fault may be inoperative.
+
+## Resolution
+An A320 aircraft already had ignition system 'B' deferred, on #1 engine. Crew reported not getting an ECAM warning that: CIRCUIT BREAKER TRIPPED REAR PNL (PANEL). I deferred this discrepancy per MEL 74-31-03, per our Maintenance Control. This MEL states that an ECAM caution ignition fault may be inoperative. After reading the MEL again, I am still not sure whether it could be used to cover the tripped circuit breaker warning on the ECAM, since the circuit breaker is part of the ignition system. I suppose it is only for the ignition fault ECAM warning. However, not getting the CIRCUIT BREAKER TRIPPED REAR PNL ECAM warning for that specific ignition system circuit breaker, is also a fault of that part of the ignition system; meaning the circuit breaker of the ignition system [that was] already deferred, was faulty. 
+
+I pulled the other ignition system circuit breakers, one at a time, to verify that they gave the ECAM warning: CIRCUIT BREAKER TRIPPED REAR PNL and then reset them.  Perhaps an MEL that addresses the ECAM warning: CIRCUIT BREAKER TRIPPED REAR PNL being inoperative, for a system that is already deferred and inoperative with the circuit breaker pulled and collared, would alleviate this issue. I cannot see any reason that the circuit breaker tripped warning needs to work for a specific system that is deactivated and the circuit breaker pulled and collared.  In the future, I will do my best to make my own decisions regarding applicability of an MEL and not let a Maintenance Controller misguide me. I am sure though that he did not see a problem with using the MEL as applied.

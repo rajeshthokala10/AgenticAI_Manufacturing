@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1049802
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+the reporter indicated that even with the 100 flight hour periodic inspections, the rivet had failed since the last check.
+
+## Resolution
+Teledyne Continental Motors (formerly Bendix) released a mandatory Service Bulletin (MSB645) in April 1994 requiring periodic inspections of S-20, S-1200, D-2000 and D-3000 series magnetos with riveted impulse couplings for wear. Wear on the rivet shank causes the pawl to extend further outward and will eventually hit the stop pin. This causes pieces of the coupling to fall into the accessory case, causing engine damage. The Service Bulletin indicates that starting performance is not an indicator of coupling wear condition. Termination of the periodic checks on the subject engine model is accomplished by the replacement of the impulse coupling with a snap ring style.

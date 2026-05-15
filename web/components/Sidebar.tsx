@@ -3,18 +3,20 @@
 import type {
   AccessPolicyResponse,
   AuthUser,
+  Domain,
+  DomainCatalog,
+  DomainCatalogEntry,
   HealthResponse,
   StatsResponse,
 } from "@/lib/api";
 
-const SUGGESTIONS = [
-  "What is the OEE target for Plant A in Q1 2026?",
-  "Pump P-203 has high vibration alarm ALM-P001. Cause and fix?",
-  "Why did CNC Line 4 shut down in February?",
-  "Compare Nippon Steel vs ArcelorMittal",
-  "Belt tracking deviation on conveyor CV-301",
-  "maintanance schedul for spindle bearings",
-  "PLC fault code FC-003 on conveyor CV-302",
+// Fallback "Try these queries" list. Used only when the active domain's
+// catalog entry has no ``examples`` (e.g. during first paint before
+// /api/domains has responded).
+const FALLBACK_SUGGESTIONS = [
+  "What can you help me with?",
+  "Summarise the most recent incident",
+  "What is the maintenance procedure for the most-failing equipment?",
 ];
 
 // One-click queries that exercise the HITL approval gate. Each is designed
@@ -61,6 +63,8 @@ type Props = {
   onPickSuggestion: (s: string) => void;
   onNewChat: () => void;
   onSignOut?: () => void;
+  activeDomain: Domain;
+  catalog: DomainCatalog;
 };
 
 // Visual tone per document-classification tier. The tone scales with the
@@ -108,16 +112,32 @@ export function Sidebar({
   onPickSuggestion,
   onNewChat,
   onSignOut,
+  activeDomain,
+  catalog,
 }: Props) {
+  const entry: DomainCatalogEntry | undefined = catalog.domains.find(
+    (d) => d.id === activeDomain,
+  );
+  const brandLabel = entry?.label ?? "Copilot";
+  const brandEmoji = entry?.emoji ?? "🏭";
+  const brandColor = entry?.color ?? "#B45309";   // copper fallback
+  // Source the sidebar's "Try these queries" panel from the same schema-
+  // declared examples that drive the chat empty state.
+  const suggestions = entry?.examples?.length
+    ? entry.examples.slice(0, 7)
+    : FALLBACK_SUGGESTIONS;
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-ink-900/8 bg-cream-100/60 px-5 py-6 md:flex">
       <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-copper-500 text-base font-bold text-cream-50 shadow-soft">
-          🏭
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-xl text-base font-bold text-cream-50 shadow-soft"
+          style={{ background: brandColor }}
+        >
+          {brandEmoji}
         </div>
         <div>
           <div className="text-sm font-semibold text-ink-900">
-            Manufacturing
+            {brandLabel}
           </div>
           <div className="text-xs text-ink-500">Hybrid GraphRAG · v1.0</div>
         </div>
@@ -187,7 +207,7 @@ export function Sidebar({
           Try a question
         </div>
         <div className="flex flex-col gap-1.5">
-          {SUGGESTIONS.map((s) => (
+          {suggestions.map((s) => (
             <button
               key={s}
               onClick={() => onPickSuggestion(s)}

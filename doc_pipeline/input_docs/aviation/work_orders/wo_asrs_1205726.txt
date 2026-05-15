@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1205726
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 instructor experienced a power loss and a rough running engine at 600 feet agl on departure with the student flying. a downwind entry to a visual approach is planned, but when hot oil smells begin entering the cockpit a short approach is accomplished successfully.
+
+## Resolution
+Professionally handled.

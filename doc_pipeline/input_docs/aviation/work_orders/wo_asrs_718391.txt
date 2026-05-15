@@ -1,0 +1,9 @@
+Work Order: wo:asrs:718391
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b757-300 #2 exciter ignition box was to be replaced on #1 engine but #2 engine #2 ignition box was replaced in error.
+
+## Resolution
+ON NOV/SAT/06, CHANGED #2 EXCITER IGNITION BOX ON #2 ENG OF ACR XXX. I MADE A MISTAKE AND CHANGED THE EXCITER ON THE WRONG ENG. BY READING THE HISTORY AND SEEING IT READ #2 EXCITER BUT #1 ENG SHOULD HAVE BEEN CLRED.

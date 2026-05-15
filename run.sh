@@ -47,13 +47,16 @@ mkdir -p "$LOG_DIR"
 API_PORT="${API_PORT:-8000}"
 STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
 WEB_PORT="${WEB_PORT:-3000}"
+QDRANT_PORT="${QDRANT_PORT:-6333}"
+QDRANT_IMAGE="${QDRANT_IMAGE:-qdrant/qdrant:latest}"
+QDRANT_CONTAINER="${QDRANT_CONTAINER:-kg-rag-qdrant}"
 
 # Required deps that the API + Streamlit need to be importable. If any of
 # these is missing from the chosen Python, we'll (re)install requirements.txt.
 # Keep this list small/fast — heavy modules (sentence_transformers, torch) are
 # probed via `find_spec` only, not actually imported, so the check stays under
 # 1 second instead of 10+ seconds.
-REQUIRED_PKGS=(streamlit fastapi uvicorn faiss sentence_transformers networkx pandas openai langgraph langchain_core langgraph.checkpoint.sqlite)
+REQUIRED_PKGS=(streamlit fastapi uvicorn qdrant_client sentence_transformers networkx pandas openai langgraph langchain_core langgraph.checkpoint.sqlite pydantic_settings yaml)
 
 # ── pretty helpers ─────────────────────────────────────────────────────────
 say()  { printf "  · %s\n" "$*"; }
@@ -569,7 +572,52 @@ onoff() {
 
 echo ""
 
-# ─ 6a. FastAPI ──
+# ─ 6a. Qdrant (vector store) ──
+# Embedded Qdrant uses an exclusive file lock so it cannot be shared across
+# the FastAPI + Streamlit + Next.js processes this script launches. We
+# auto-boot a Qdrant container (or skip if QDRANT_URL is already configured
+# to point at an external instance) and inject QDRANT_URL into every child.
+QDRANT_URL_ENV="$(effective_flag QDRANT_URL "")"
+
+start_qdrant_container() {
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "docker not found — leaving Qdrant in embedded mode."
+    warn "Run only ONE python service at a time, or install docker."
+    return 0
+  fi
+
+  # Remove a stale container with the same name (idempotent restarts).
+  docker rm -f "$QDRANT_CONTAINER" >/dev/null 2>&1 || true
+
+  local storage="$ROOT/doc_pipeline/vector_store/qdrant"
+  mkdir -p "$storage"
+  free_port "$QDRANT_PORT"
+
+  say "starting qdrant container ($QDRANT_IMAGE)"
+  docker run -d --rm \
+    --name "$QDRANT_CONTAINER" \
+    -p "$QDRANT_PORT":6333 \
+    -v "$storage":/qdrant/storage \
+    "$QDRANT_IMAGE" \
+    >"$RUN_DIR/qdrant.cid" 2>"$LOG_DIR/qdrant.log" || {
+      err "qdrant container failed to start. Tail of qdrant.log:"
+      tail -n 30 "$LOG_DIR/qdrant.log" || true
+      exit 1
+    }
+  wait_for_url "http://localhost:$QDRANT_PORT/" "qdrant" 60
+  export QDRANT_URL="http://localhost:$QDRANT_PORT"
+  ok "qdrant url: $QDRANT_URL"
+}
+
+hr "Qdrant vector store"
+if [[ -n "$QDRANT_URL_ENV" ]]; then
+  say "QDRANT_URL=$QDRANT_URL_ENV in .env — assuming external Qdrant. Skipping container."
+  export QDRANT_URL="$QDRANT_URL_ENV"
+else
+  start_qdrant_container
+fi
+
+# ─ 6b. FastAPI ──
 hr "FastAPI backend (api/server.py)"
 free_port "$API_PORT"
 PYTHONPATH="$ROOT" bg_run "api" "$PY" -m uvicorn api.server:app \

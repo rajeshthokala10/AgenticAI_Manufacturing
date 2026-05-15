@@ -1,0 +1,9 @@
+Work Order: wo:asrs:400066
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plt of be35 has engine failure. he makes a safe landing at an arpt 6 mi away. aircraft had been picked up from annual 4 days previously.
+
+## Resolution
+COMPLETE OIL LOSS, TOTAL ENG FAILURE. MADE SAFE LNDG AT 1J0. TOTAL TIME INFLT 45 MINS. PICKED UP PLANE FROM ANNUAL 4 DAYS BEFORE FLT.

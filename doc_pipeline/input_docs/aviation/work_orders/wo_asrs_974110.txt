@@ -1,0 +1,9 @@
+Work Order: wo:asrs:974110
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+light sport aircraft engine failed during climb followed by an off airport landing. the rotax 582 engine had been operated fifty hours past the suggested 300 hours between overhauls.
+
+## Resolution
+Although operating this engine past its' suggested overhaul time cannot be condoned, one would not expect total engine failure to occur at this point. Two stroke engines receive their lubrication from a fuel oil mix or from direct oil injection which is subject to human error or oil pump failure.

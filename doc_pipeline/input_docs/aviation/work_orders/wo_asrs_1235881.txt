@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1235881
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c152 instructor pilot experiences a rough running engine climbing out from ca93 and elects to return. maintenance arrives and finds the bottom plugs have carbon build up. the plugs are cleaned and the aircraft is flown back to base where the engine begins to run rough again during approach.
+
+## Resolution
+Completed training maneuvers with student approximately 3 miles South of Crows Landing (CA93). On climb out to return to home base, I began to lose power. At 1800 FT MSL I was unable to climb then the aircraft began to shudder from engine vibrations. I turned the aircraft to CA93 in the event I was unable to regain power. After troubleshooting the aircraft I was unable to restore power. I notified NORCAL APCH of my intention to land at CA93 Crows Landing and had my student read the forced landing checklist. We made the field without incident. Company maintenance arrived about 1.5 hours later and said the bottom plugs had carbon build-up. He cleared the carbon and got the engine performing normally. I volunteered to fly the aircraft back to home base. The flight was uneventful until final approach where I began to lose power once again. I made the field and taxied the aircraft to maintenance. I observed no visible damage or leaking fluids from the aircraft. After the incident I had 19 gallons of fuel and normal oil levels.

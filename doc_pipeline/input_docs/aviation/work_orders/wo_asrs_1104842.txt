@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1104842
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+experimental nieuport aircraft pilot reports engine failure and lands in a grass field. a loose battery cable is properly connected and the aircraft departs.
+
+## Resolution
+It would seem that an item was overlooked during preflight.

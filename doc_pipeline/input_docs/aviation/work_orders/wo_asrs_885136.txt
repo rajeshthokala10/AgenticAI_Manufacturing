@@ -1,0 +1,15 @@
+Work Order: wo:asrs:885136
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a mechanic reports he failed to order and install a missing oil pressure screen for a pw-r985 engine on a grumman g-164 aircraft. mechanic recognized his unprofessional maintenance practice and discussed issue with his supervisor who helped schedule the g-164 for a screen installation.
+
+## Resolution
+I was performing a routine oil change on a Pratt-Whitney R-985. An approved oil filter Supplemental Type Certificate (STC) had recently been installed, so I read up on the procedures for inspecting the oil system with the STC. After cutting open and inspecting the paper filter, I removed the oil pressure screen plug to inspect that screen as well. After removing the plug, there was no screen to be found in the cavity. I referenced the STC installation instructions, which mentioned removing an oil screen, but I decided to call the air filter manufacturer and ask them for clarification. 
+
+After speaking with a Technical Representative, he said the screen was not supposed to be removed, but that its removal would result in any debris ending up in the paper filter instead of the screen. Since the paper filter had been fairly clean (1/8 teaspoon of light particles), I put the Grumman G-164 Ag-Cat back together and signed off the oil change. The aircraft then left on a flight out of town. I was under some pressure to get the aircraft flying, but not enough to justify not ordering a screen and installing it. I felt like I had violated my standards as a Mechanic in signing off the oil change with no screen. 
+
+I talked with my boss and we agreed to install the screen when the aircraft returned in the next few days. To avoid this in the future, I need to not allow work related pressure to influence my decision making. It is my responsibility to protect my reputation and the lives of those whose aircraft I work on. Overlooking a small thing now will result in complacency and more serious errors down the road, if they are not addressed now. 
+
+While overlooking the screen did not present an immediate safety hazard, the attitude and thought process behind the action did - and that I failed to recognize soon enough. It is my desire to be a safe, good Mechanic, one that shows a high level of professionalism. This report is the first step toward addressing the deficiency uncovered above. It is now my responsibility to ensure that the proper outlook and attitudes come to work with me each and every day.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1146366
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+three months after installing repaired cylinders on a turbocharged io-360 lycoming engine, pilot experiences loss of # 3 cylinder and strong engine vibrations at 6,500 ft, night time vfr. emergency declared and pilot notes that atc's help and support was wonderful in getting the mooney m20f aircraft to an alternate airport. an exhaust push rod had failed due to an intake rocker arm had been installed at the # 3 cylinder exhaust rocker arm position.
+
+## Resolution
+Reporter was definitely thankful for ATC's help. The lack of distinct markings on some of the rocker arms appear to have been instrumental in the improper rocker arm installations. Whether the incorrect positioning occurred at the cylinder Repair facility or by reporter, may never be determined. Apparently reporter had some doubt about the dimished markings on the rocker arms and he may have been slightly complacent by not pursuing more definitive information.

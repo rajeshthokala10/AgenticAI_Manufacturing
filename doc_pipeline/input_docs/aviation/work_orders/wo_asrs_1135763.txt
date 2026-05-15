@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1135763
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 pilot experiences electrical failure shortly after takeoff and elects to continue to an alternate destination. enroute the engine begins to run rough and the decision is made to divert to the original destination beneath class b airspace.
+
+## Resolution
+The decision to divert to the original destination was reasonable but the decision to continue after electrical failure was questionable. It would appear that this aircraft has not been well cared for.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:933138
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+m20 pilot experienced a substantial power loss at 6,000 ft and diverted to the nearest suitable airport after declaring an emergency with atc. engine continues to run throughout the approach and landing.
+
+## Resolution
+[I was] enroute at 6,000 FT engine suddenly developed problem resulting in substantial loss of power. Declared an emergency with Center and reported airport in sight and began descent. Center cleared me to land at the airport and I spiraled down, contacted Tower and landed successfully. As instructed, taxied in following emergency vehicles to FBO and sought repair. As of this writing, repair not yet completed. Aircraft will be thoroughly evaluated prior to return to service.

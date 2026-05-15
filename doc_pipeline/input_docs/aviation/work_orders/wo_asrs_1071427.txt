@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1071427
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+mxs pilot experiences a catastrophic engine failure at 8,500 ft and is able to glide to a suitable airport and land on a closed runway. there was insufficient time to contact the tower via radio prior to landing.
+
+## Resolution
+Frequency 121.5 will usually work to contact any Tower in an emergency. Well handled.

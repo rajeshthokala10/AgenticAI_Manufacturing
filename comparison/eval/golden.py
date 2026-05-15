@@ -30,6 +30,12 @@ class GoldenItem:
     forbidden: List[str] = field(default_factory=list)
     category: str = "general"
     difficulty: str = "medium"
+    # ── Hard targets (piston-style) ──────────────────────────────────────
+    # When set, the eval scorer adds boolean ``top_cause_match`` /
+    # ``subsystem_match`` columns to the per-record metrics. Leave empty
+    # to skip — most golden items focus on soft RAGAS-style metrics only.
+    expected_top_cause: str = ""
+    expected_subsystem: str = ""
 
 
 _DEFAULT_GOLDEN: List[GoldenItem] = [
@@ -46,6 +52,8 @@ _DEFAULT_GOLDEN: List[GoldenItem] = [
         forbidden=["bypass lockout", "ignore alarm"],
         category="troubleshoot",
         difficulty="medium",
+        expected_top_cause="BearingWear",
+        expected_subsystem="pump",
     ),
     GoldenItem(
         id="trb-002",
@@ -59,6 +67,8 @@ _DEFAULT_GOLDEN: List[GoldenItem] = [
         forbidden=["bypass interlock"],
         category="troubleshoot",
         difficulty="medium",
+        expected_top_cause="BeltMisalignment",
+        expected_subsystem="conveyor",
     ),
     GoldenItem(
         id="proc-001",

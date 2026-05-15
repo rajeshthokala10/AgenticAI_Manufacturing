@@ -1,0 +1,165 @@
+# Manufacturing (industrial) knowledge-graph schema.
+#
+# Declarative ontology adopted from kgrag's L1 contract. The Python KG builder
+# validates every node and edge against this schema at construction time; the
+# gap detector walks the schema against the constructed graph to surface
+# missing / conflicting / low-confidence edges for HITL review.
+#
+# This file is the *industrial / plant-floor* domain. Aviation / piston-engine
+# entities live in ``schemas/aviation.yaml`` and are loaded against a
+# separate Qdrant collection + separate KG file. See ``config.SCHEMA_PATHS``.
+
+version: 1
+domain: manufacturing
+# Display metadata — read by config.DOMAIN_DISPLAY and used by every UI
+# affordance (Streamlit sidebar selector, per-message pills, Next.js
+# chat-header switcher). Override to rebrand or recolor.
+display:
+  label: Manufacturing
+  emoji: "🏭"
+  color: "#475569"   # slate-600
+
+entity_types:
+  - name: Equipment
+    description: Plant-floor equipment instance with a site asset tag.
+    id_pattern: '^(?:P|CV|HP|CNC|STAMP|WELD|HT|COAT)-[A-Z0-9]{1,3}-?\d{2,4}$'
+    case_sensitive: false
+
+  - name: Component
+    description: A sub-component of equipment (bearing, seal, impeller, …).
+    case_sensitive: false
+    vocabulary:
+      - impeller
+      - seal
+      - bearing
+      - coupling
+      - motor
+      - shaft
+      - belt
+      - roller
+      - tensioner
+      - sensor
+      - vfd
+      - gearbox
+      - cylinder
+      - valve
+      - accumulator
+      - platen
+      - pump
+      - filter
+      - gasket
+      - o-ring
+      - bushing
+      - encoder
+
+  - name: Alarm
+    description: An alarm code raised by control systems.
+    id_pattern: '^ALM-[A-Z]\d{3}$'
+
+  - name: FailureMode
+    description: A failure-mode / fault-code instance.
+    id_pattern: '^FC-\d{3}$'
+
+  - name: Symptom
+    description: |
+      An observed condition extracted from narrative text. Intentionally
+      open-vocab so the NarrativeExtractor can surface arbitrary phrases
+      for HITL review.
+
+  - name: Cause
+    description: A root-cause candidate. Closed vocabulary.
+    case_sensitive: false
+    vocabulary:
+      - bearing wear
+      - seal leak
+      - belt slip
+      - misalignment
+      - overheating
+      - cavitation
+      - contamination
+      - electrical fault
+      - control loop instability
+
+  - name: Procedure
+    description: A diagnostic / maintenance / repair procedure step.
+
+  - name: SparePart
+    description: A spare-part number from the BOM.
+    id_pattern: '^(SP|TH|BRK|SFT|HSG|GR)-\d{4}$'
+
+  - name: Specification
+    description: A spec value (pressure, temperature limit, etc.).
+
+edge_types:
+  - name: HAS_COMPONENT
+    source: Equipment
+    target: Component
+    min_cardinality: 1
+
+  - name: TRIGGERS_ALARM
+    source: Equipment
+    target: Alarm
+
+  - name: CAUSES_FAILURE
+    source: [Equipment, Alarm, Cause]
+    target: FailureMode
+
+  - name: HAS_SYMPTOM
+    source: Equipment
+    target: Symptom
+
+  - name: HAS_CAUSE
+    source: [Symptom, FailureMode, Equipment]
+    target: Cause
+
+  - name: RESOLVED_BY
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+  - name: REQUIRES_PART
+    source: Equipment
+    target: SparePart
+
+  - name: FOLLOWS_PROCEDURE
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+  - name: HAS_SPECIFICATION
+    source: Equipment
+    target: Specification
+
+traversal_routes:
+  symptom_to_fix:
+    seed_types: [Symptom]
+    walk: [HAS_CAUSE, CAUSES_FAILURE, RESOLVED_BY]
+  alarm_to_procedure:
+    seed_types: [Alarm]
+    walk: [CAUSES_FAILURE, RESOLVED_BY]
+  equipment_to_parts:
+    seed_types: [Equipment]
+    walk: [HAS_COMPONENT, REQUIRES_PART]
+
+gap_thresholds:
+  low_confidence: 0.7
+  retrieval_floor: 0.0
+
+# UX copy surfaced by Streamlit + the Next.js header. Lets the schema YAML
+# be the single per-domain edit a user makes — no app.py / page.tsx touch
+# required when onboarding a new domain.
+placeholder: "Ask anything about manufacturing operations…"
+empty_state:
+  heading: "How can I help with the line today?"
+  blurb: >
+    I can troubleshoot equipment, look up KPIs, compare suppliers, and
+    explain procedures — all grounded in your manufacturing documents.
+examples:
+  - "What is the OEE target for Q2 2026?"
+  - "Pump P-203 has high vibration alarm ALM-P001. Cause and fix?"
+  - "Why did CNC Line 4 shut down in February?"
+  - "Compare Nippon Steel vs ArcelorMittal"
+  - "Belt tracking deviation on conveyor CV-301"
+  - "Hydraulic press HP-401 pressure loss — diagnose"
+  - "What is the CAPA process for critical NCR?"
+  - "maintanance schedul for spindle bearings"
+  - "PLC fault code FC-003 on conveyor CV-302"
+  - "scrap rate for welding Plant A vs Plant B"

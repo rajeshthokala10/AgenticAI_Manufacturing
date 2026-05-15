@@ -1,0 +1,9 @@
+Work Order: wo:asrs:840346
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pilot reports flying conquest to home base for maintenance with fuel computers in manual mode as permitted by poh. reporter now believes a ferry permit should have been obtained.
+
+## Resolution
+I arrived with an A&P/IA that specializes in the Cessna Conquest II airplane and Garrett engines.  We did some diagnostics and run-ups to determine and correct the problem that caused a loss of engine torque on the last flight in the airplane.  The trouble could not be duplicated and it was the opinion of the A&P/IA that it was an intermittent problem with the fuel computer.  At the advice of the A&P/IA, the fuel computers were taken off line and the aircraft was flown home in manual mode, which is permitted by the POH.  It later dawned on me that we could have gotten a ferry permit for that flight but we didn't.  At the time, I felt that the flight was safe but it seems that I could have, as a procedural issue, sought and gotten a ferry permit to ferry the airplane back to where that A&P/IA has a shop and more complete diagnostic equipment. There were no injuries or damage to anyone or anything.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1238044
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+r-22 instructor pilot experiences an engine failure shortly after takeoff and is able to auto rotate to an unused taxiway at the departure airport.
+
+## Resolution
+Was conducting a routine training flight and on departure experienced loss of engine power. Made a right turn crossing the extended center line of runway 15 at or below 100 feet AGL.  Executed a routine emergency landing on an unused adjacent taxiway.

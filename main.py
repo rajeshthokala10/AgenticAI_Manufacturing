@@ -76,16 +76,33 @@ def main() -> None:
                         help="Run all 3 pipelines side by side.")
     parser.add_argument("--json", action="store_true",
                         help="Print the result as JSON.")
+    parser.add_argument("--domain", type=str, default=None,
+                        help="Which domain to build/query: manufacturing|aviation|all.")
     args = parser.parse_args()
 
-    print("Building / loading unified pipeline...")
-    pipe = ManufacturingPipeline()
-    stats = pipe.build_or_load(rebuild=args.rebuild, enable_llm=not args.no_llm)
+    from config import DOMAINS, normalize_domain
+    if args.domain == "all":
+        target_domains = list(DOMAINS)
+    elif args.domain is None:
+        target_domains = list(DOMAINS)   # default behaviour: build both
+    else:
+        target_domains = [normalize_domain(args.domain)]
 
-    print("\n=== Pipeline ready ===")
-    for k, v in stats.items():
-        if isinstance(v, (str, int, float, bool)):
-            print(f"  {k}: {v}")
+    pipes: dict[str, ManufacturingPipeline] = {}
+    for d in target_domains:
+        print(f"Building / loading unified pipeline [{d}]...")
+        p = ManufacturingPipeline(domain=d)
+        stats = p.build_or_load(rebuild=args.rebuild, enable_llm=not args.no_llm)
+        print(f"\n=== Pipeline ready [{d}] ===")
+        for k, v in stats.items():
+            if isinstance(v, (str, int, float, bool)):
+                print(f"  {k}: {v}")
+        pipes[d] = p
+
+    # Subsequent CLI actions (--query/--diagnostic/--compare/--demo) run
+    # against the first selected domain — the user can re-invoke with a
+    # different --domain to target the other.
+    pipe = pipes[target_domains[0]]
 
     if args.compare:
         results = pipe.compare(args.compare)

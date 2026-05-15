@@ -7,6 +7,10 @@
 
 const TOKEN_KEY = "mfg-graphrag-auth-token";
 
+export function readAuthToken(): string | null {
+  return readToken();
+}
+
 function readToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(TOKEN_KEY);
@@ -181,11 +185,91 @@ export type MyApprovalsResponse = {
   actioned: AuditEntry[];
 };
 
+// Domain registry is sourced from /api/domains at runtime — see
+// ``api.domains()`` below. ``Domain`` is just ``string`` because adding a
+// new domain on the backend (drop a schema YAML) should not require a
+// TypeScript edit on the frontend.
+export type Domain = string;
+export const DEFAULT_DOMAIN: Domain = "manufacturing";
+
+export type DomainCatalogEntry = {
+  id: Domain;
+  label: string;
+  emoji: string;
+  color: string;
+  // UX copy authored in the schema YAML — keeps the Next.js bundle free of
+  // domain literals.
+  placeholder?: string;
+  empty_state?: { heading?: string; blurb?: string };
+  examples?: string[];
+  loaded?: boolean;
+};
+
+export type DomainCatalog = {
+  default: Domain;
+  domains: DomainCatalogEntry[];
+};
+
+// Sensible fallback when /api/domains hasn't responded yet (first paint).
+// Keeps the UI from flashing empty during the round-trip.
+export const FALLBACK_CATALOG: DomainCatalog = {
+  default: "manufacturing",
+  domains: [
+    {
+      id: "manufacturing",
+      label: "Manufacturing",
+      emoji: "🏭",
+      color: "#475569",
+      empty_state: { heading: "Manufacturing Copilot" },
+      examples: [],
+    },
+    {
+      id: "aviation",
+      label: "Aviation",
+      emoji: "✈️",
+      color: "#B45309",
+      empty_state: { heading: "Aviation Copilot" },
+      examples: [],
+    },
+  ],
+};
+
+// Shape returned by /api/diagnostic — mirrors PipelineResult.to_dict() in
+// pipeline/unified_pipeline.py. Fields beyond ``answer`` / ``evidence`` are
+// optional because not every pipeline mode populates them.
+export type DiagnosticResponse = {
+  mode: string;
+  query: string;
+  answer: string;
+  evidence: Array<{
+    text?: string;
+    metadata?: Record<string, unknown>;
+    vector_score?: number;
+    rrf_score?: number;
+  }>;
+  graph_context?: {
+    nodes?: Array<{ id: string; entity_type?: string }>;
+    edges?: Array<{ source: string; target: string; relation?: string }>;
+  } | null;
+  metrics?: Record<string, unknown>;
+  procedure?: Record<string, unknown> | null;
+  cause_ranking?: Record<string, unknown> | null;
+  rejected?: boolean;
+  pipeline_status?: string;
+};
+
 export type HealthResponse = {
   status: string;
   ready: boolean;
   error: string | null;
-  llm_enabled: boolean;
+  // Newer multi-domain shape: `domains` lists all configured domains and
+  // `domain_status` maps each one to its readiness flags. The legacy
+  // single-domain fields (`llm_enabled` etc.) are no longer set by the
+  // FastAPI layer.
+  domains?: Domain[];
+  default_domain?: Domain;
+  domain_status?: Record<Domain, { loaded: boolean; llm_enabled: boolean }>;
+  llm_enabled?: boolean;
   llm_model: string;
   embedding_model: string;
   version: string;
@@ -231,23 +315,32 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => jsonFetch<HealthResponse>("/api/health"),
-  stats: () => jsonFetch<StatsResponse>("/api/stats"),
-  chat: (sessionId: string, message: string) =>
-    jsonFetch<{ session_id: string; new_turns: ChatTurn[]; state: ChatState }>(
-      "/api/chat",
-      {
-        method: "POST",
-        body: JSON.stringify({ session_id: sessionId, message }),
-      },
-    ),
-  reset: (sessionId: string) =>
+  domains: () => jsonFetch<DomainCatalog>("/api/domains"),
+  stats: (domain: Domain = DEFAULT_DOMAIN) =>
+    jsonFetch<StatsResponse>(`/api/stats?domain=${domain}`),
+  chat: (sessionId: string, message: string, domain: Domain = DEFAULT_DOMAIN) =>
+    jsonFetch<{
+      session_id: string;
+      domain: Domain;
+      new_turns: ChatTurn[];
+      state: ChatState;
+    }>("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, message, domain }),
+    }),
+  diagnostic: (message: string, domain: Domain = DEFAULT_DOMAIN) =>
+    jsonFetch<DiagnosticResponse>("/api/diagnostic", {
+      method: "POST",
+      body: JSON.stringify({ message, domain }),
+    }),
+  reset: (sessionId: string, domain: Domain = DEFAULT_DOMAIN) =>
     jsonFetch<{ ok: boolean }>("/api/reset", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify({ session_id: sessionId, domain }),
     }),
-  getSession: (sessionId: string) =>
-    jsonFetch<{ session_id: string; state: ChatState }>(
-      `/api/sessions/${sessionId}`,
+  getSession: (sessionId: string, domain: Domain = DEFAULT_DOMAIN) =>
+    jsonFetch<{ session_id: string; domain: Domain; state: ChatState }>(
+      `/api/sessions/${sessionId}?domain=${domain}`,
     ),
   getApproval: (threadId: string) =>
     jsonFetch<ApprovalSnapshot>(`/api/approvals/${threadId}`),

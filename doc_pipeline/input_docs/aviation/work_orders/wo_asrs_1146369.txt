@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1146369
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c152 pilot experiences fluctuating rpm during cruise and diverts to a suitable airport.
+
+## Resolution
+Professionally handled. It is time to seek the advice of an aircraft mechanic.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1034844
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+while conducting maintenance on an embraer 145, a maintenance technician installed a fuel tank in the wrong location.
+
+## Resolution
+The AMT may need additional monitoring or assistance with IPC and maintenance manaul interpretation.

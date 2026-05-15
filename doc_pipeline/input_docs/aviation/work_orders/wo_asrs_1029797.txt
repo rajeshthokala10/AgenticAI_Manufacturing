@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1029797
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an aircraft maintenance technician (amt) with inspection authority, reports a piper pa28 cherokee six elected to land after the pilot reported the lycoming io-540 engine started making knocking noise. two overhauled cylinders had been installed just ten flight hours earlier.
+
+## Resolution
+Unclear if Inspection requirements specifically called out for verifying the cylinder head part numbers to determine correct position on the IO-540 engine after they were installed.

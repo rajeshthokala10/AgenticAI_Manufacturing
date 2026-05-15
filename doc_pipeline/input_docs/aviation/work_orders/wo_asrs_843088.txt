@@ -1,0 +1,9 @@
+Work Order: wo:asrs:843088
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+md80 captain reports returning to gate for ignition repair and notes inability to cool cabin with both preconditioned or apu supplying air to one pack. captain informed dispatch airborne that he will not take this aircraft to another hot destination as scheduled.
+
+## Resolution
+On the second pushback at PHX on engine start the left engine would not start. We again returned to the gate and maintenance changed the left engine igniter box. This aircraft had been written up previously for marginal airflow. The cabin temp gage indicated 96 degrees in the aircraft. This was even though we had the APU running and then ground preconditioned air. Once airborne I called Dispatch and informed the Dispatcher I would not take this aircraft to another hot destination as scheduled.

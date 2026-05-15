@@ -1,0 +1,9 @@
+Work Order: wo:asrs:966393
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c402 captain detected a strange vibration during cruise and elected to divert for a precautionary landing.
+
+## Resolution
+A prudent decision. Piston engine anomalies are often sensed by the pilot before they become apparent on the engine instruments.

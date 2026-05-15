@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1068390
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c340 pilot experienced an engine failure shortly after leveling off at 10,000 ft. an emergency is declared and flight diverts to the nearest suitable airport. the pilot reports difficulty managing the emergency and flying the single engine ils in imc and turbulence as a single pilot. the gear is extended early resulting in difficulty maintaining approach speed.
+
+## Resolution
+The descent time from 10,000 feet should have been used to plan and set up the approach. The Controller probably can't read the checklist but if more time is needed, vectors can be requested. Single pilot IFR can be challenging, especially with an engine failure and turbulence and IMC.

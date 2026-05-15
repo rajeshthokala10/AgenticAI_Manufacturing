@@ -1,0 +1,9 @@
+Work Order: wo:asrs:282675
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+flc found that the #1 ignitor did not start either engine due to 'popped' circuit breakers.
+
+## Resolution
+#1 IGNITORS DID NOT START #1 ENG. #1 IGNITORS DID NOT START #2 ENG. STARTED BOTH ENGS ON #2 IGNITORS. UPON REFLECTION OF MEL 74-1A, THERE MAY BE UNCLR INFERENCE WHEN IT SAYS ONE MAY BE INOP. THE PROB WAS POPPED CIRCUIT BREAKER FOR ENG #1 IGNITION #1 AND POPPED CIRCUIT BREAKER FOR ENG #2 IGNITION #1.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:816070
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+cessna 210 pilot suffers catastrophic engine failure shortly after takeoff. lands safely in field.
+
+## Resolution
+Catastrophic engine failure with rod component through top of engine case. IFR Departure from ZZZ with charity passenger and Co-pilot. Departed Runway 14 and vectored to 080 degrees, then southeast. Rolled level and loud bang and heavy shudder of engine. Turned boost pump on, manipulated throttle with no help. RPM stayed about 1000-1200 RPM. Oil pressure = 0. Declared emergency and turned direct ZZZ and cleared to airport. Unable to make it to ZZZ. Considered highway, but heavy traffic. Located open snow field and committed with good approach and landing -- no damage. Approximately 4 minutes of time involved. This confirms about changing your mind only ONCE! And FLY THE AIRPLANE!

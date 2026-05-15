@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1171087
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+the pilot of a cessna 150 experienced a partial power loss during climb and successfully returned to the departure airport. a cracked engine cylinder was later discovered to be the cause of the malfunction.
+
+## Resolution
+It is unknown if the previous annual inspection had provided any clues of an impending failure.

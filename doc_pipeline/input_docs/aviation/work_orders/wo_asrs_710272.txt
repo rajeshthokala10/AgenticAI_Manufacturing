@@ -1,0 +1,9 @@
+Work Order: wo:asrs:710272
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 plt on training flt experiences engine failure after rotation.
+
+## Resolution
+MAGNETO FAILURE AND LOSS OF PWR AFTER ROTATION ON RWY 7R WITH NO RWY REMAINING, I TOOK THE FLT CTLS FROM THE STUDENT AND WAS UNABLE TO CLB WITH A MAX ALT OF APPROX 75 FT AGL. DECLARED AN EMER AND LANDED ON PARALLEL RWY 25R WITH NO DAMAGE TO THE ACFT OR INJURY TO CREW.

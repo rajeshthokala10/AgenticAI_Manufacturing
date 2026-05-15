@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1210100
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an instructor pilot describes an engine problem and successful diversion to the closest airport.
+
+## Resolution
+Removed some of the extraneous data from the narrative for de-id purposes and an unclear statement about the part's status.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:474277
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b777-200 parked in a hangar incurred a large fuel spill when replacing a l main tank forward boost pump caused by the pump cavity chk valve failure.
+
+## Resolution
+ASSIGNED CHANGE ORDER AUTH -- FOLLOWED STEPS 1,2, 3, AND 4. AFTER REMOVING VALVE, FUEL SPILL OCCURRED. FUEL WAS XFERRED FROM L-HAND TANK TO R-HAND TANK UNTIL L-HAND TANK READ ZERO, THEN REMOVAL PROCESS CONTINUED. END RESULT WAS A FUEL SPILL. NO ACFT DAMAGE OCCURRED. NO FUEL ENTERED DRAIN SYS. FUEL WAS CLEANED UP WITHOUT INCIDENT. I BELIEVE THE CAUSE WAS UNWANTED FUEL XFER BACK TO L-HAND TANK OR BAD FUEL GAUGE READING.

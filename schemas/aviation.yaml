@@ -1,0 +1,177 @@
+# Aviation / piston-engine knowledge-graph schema.
+#
+# Companion to ``schemas/manufacturing.yaml`` — same kgrag L1 contract, but
+# narrowed to the aviation domain (FAA AMT chapters + ASRS work orders).
+# Loaded against its own Qdrant collection + its own KG file; see
+# ``config.SCHEMA_PATHS`` and the ``--domain aviation`` flag on main.py.
+
+version: 1
+domain: aviation
+display:
+  label: Aviation
+  emoji: "✈️"
+  color: "#B45309"   # copper / amber
+
+entity_types:
+  - name: Equipment
+    description: |
+      An aviation work-order id (ASRS / MaintNet style) or an engine id.
+      WO ids look like ``wo:asrs:435098``; engine ids like ``ENG:O-360-A4M``.
+    id_pattern: '^(?:wo:[a-z]+:\d+|ENG:[A-Z0-9_-]+)$'
+    case_sensitive: false
+
+  - name: Component
+    description: A piston-engine sub-component.
+    case_sensitive: false
+    vocabulary:
+      - magneto
+      - spark plug
+      - ignition harness
+      - carburetor
+      - fuel injector
+      - mixture
+      - fuel pump
+      - crankshaft
+      - camshaft
+      - piston
+      - connecting rod
+      - propeller
+      - exhaust valve
+      - intake valve
+      - oil pump
+      - oil cooler
+      - cylinder
+      - valve
+
+  - name: FailureMode
+    description: A piston-engine failure-mode / fault-code instance.
+    id_pattern: '^FC-\d{3}$'
+
+  - name: Symptom
+    description: |
+      An observed condition from pilot / mechanic narrative. Open-vocab
+      (NarrativeExtractor populates).
+
+  - name: Cause
+    description: A piston-engine root-cause candidate. Closed vocabulary.
+    case_sensitive: false
+    vocabulary:
+      - fouled plug
+      - bad magneto
+      - timing off
+      - carb ice
+      - induction leak
+      - contaminated fuel
+      - mixture too lean
+      - mixture too rich
+      - stuck valve
+      - worn rings
+      - fuel pump failure
+      - fuel starvation
+      - oil starvation
+      - detonation
+      - pre-ignition
+
+  - name: Procedure
+    description: A diagnostic / maintenance / repair procedure step.
+
+  - name: SparePart
+    description: An aviation spare-part number.
+    id_pattern: '^(SP|TH|BRK|SFT|HSG|GR)-\d{4}$'
+
+edge_types:
+  - name: HAS_COMPONENT
+    source: Equipment
+    target: Component
+
+  - name: CAUSES_FAILURE
+    source: [Equipment, Cause]
+    target: FailureMode
+
+  - name: HAS_SYMPTOM
+    source: Equipment
+    target: Symptom
+
+  - name: HAS_CAUSE
+    source: [Symptom, FailureMode, Equipment]
+    target: Cause
+
+  - name: RESOLVED_BY
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+  - name: REQUIRES_PART
+    source: Equipment
+    target: SparePart
+
+  - name: FOLLOWS_PROCEDURE
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+traversal_routes:
+  symptom_to_fix:
+    seed_types: [Symptom]
+    walk: [HAS_CAUSE, CAUSES_FAILURE, RESOLVED_BY]
+  equipment_to_parts:
+    seed_types: [Equipment]
+    walk: [HAS_COMPONENT, REQUIRES_PART]
+
+gap_thresholds:
+  low_confidence: 0.7
+  retrieval_floor: 0.0
+
+placeholder: "Ask anything about piston-engine maintenance, work orders, or the FAA AMT chapters…"
+empty_state:
+  heading: "What does the piston engine need today?"
+  blurb: >
+    I diagnose piston-engine faults, walk through inspection procedures,
+    and search 500 ASRS work orders + the FAA AMT chapters.
+# Per-domain query corrections. Merged on top of the built-in manufacturing
+# defaults — leave empty to use only the defaults. Schema entries win on
+# collision so a domain can override an acronym mapping if needed.
+# Per-domain clarifier extras. Each block extends the manufacturing
+# defaults — schema entries layer on top, they don't replace.
+clarifier:
+  equipment_patterns:
+    - { pattern: '\b(WO:ASRS:\d+)\b',   type: work_order_id }
+    - { pattern: '\b(ENG:[A-Z0-9_-]+)\b', type: engine_id }
+  metric_names:
+    egt: Exhaust Gas Temperature
+    cht: Cylinder Head Temperature
+    mp:  Manifold Pressure
+    rpm: Revolutions Per Minute
+
+corrections:
+  acronyms:
+    tkof: takeoff
+    agl: above ground level
+    msl: mean sea level
+    mel: minimum equipment list
+    asrs: Aviation Safety Reporting System
+    far: federal aviation regulation
+    amt: aviation maintenance technician
+    mpa: manifold pressure
+    egt: exhaust gas temperature
+    cht: cylinder head temperature
+    rpm: revolutions per minute
+  misspellings:
+    carberator: carburetor
+    carburator: carburetor
+    magnetto: magneto
+    spakplug: spark plug
+  synonyms:
+    "carb ice": ["carburetor icing", "induction icing"]
+    "rough running": ["rough idle", "engine roughness"]
+    "fuel starvation": ["fuel exhaustion", "no fuel"]
+
+examples:
+  - "Engine quit on takeoff in humid conditions — likely cause?"
+  - "Carb ice on a Cessna 172 — symptoms and recovery procedure"
+  - "Magneto drop excessive during run-up — diagnose"
+  - "Rough running at idle after fuel-system maintenance"
+  - "Stuck exhaust valve — what does the inspection procedure look like?"
+  - "Loss of oil pressure during cruise — emergency actions"
+  - "Backfiring during start — mixture or timing?"
+  - "Fuel starvation incident WO:ASRS:589646 — resolution?"
+  - "Detonation symptoms vs pre-ignition: how to tell?"
+  - "Carburetor heat does not restore power — what next?"

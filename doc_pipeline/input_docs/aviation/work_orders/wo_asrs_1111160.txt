@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1111160
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a m20j engine failed in flight because the magnetos ceased to function after the controlling cam shaft lobe apparently broke.
+
+## Resolution
+This was a rare event. Analyst believes they should worry about metal pieces being in the crankcase which could interfere with valves or block the oil system. Undoubtedly, the engine will be torn down.

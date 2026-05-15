@@ -1,0 +1,9 @@
+Work Order: wo:asrs:596091
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an md80 from a merged carrier had an incorrect r engine ignition exciter box installed. item was clred out of a maint chk.
+
+## Resolution
+WHILE DOCKING THE AIRPLANE, SETTING CIRCUIT BREAKERS AND REMOVING COWLING AFTER TASK WAS COMPLETE, I WENT TO SIGN OFF MAINT WORK CARD 71-91-99. WHILE SIGNING PAPERWORK I MISSED READING ITEM #6 ON PAGE #6 OF PAGE 44. WARNING ABOUT INSTALLATION OF ACR X EXCITER BOX ON ACR Y LLC SERIES ACFT. ACFT WENT THROUGH CHK AND ARRIVED AT ZZZ. TERMINAL ACFT GND INTERRUPTED.

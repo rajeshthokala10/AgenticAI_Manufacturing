@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1204235
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an emb-145 eicas intermittently alerted fuel 1 low level during descent, so the crew uncertain about the actual fuel state advised atc and after landing dipped the tank which revealed a faulty totalizer.
+
+## Resolution
+A low fuel state is definitely a cause for concern and the crew acted appropriately out of an abundance of caution.

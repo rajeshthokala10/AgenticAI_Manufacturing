@@ -1,0 +1,9 @@
+Work Order: wo:asrs:958865
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+three repair shop mechanics report using a boeing process specification (spec) procedure for repair of a dented b767-200 fuel supply line. spec procedure was only for fuel drain and vent lines, not fuel supply lines, which are repaired the under the component manual (cmm).
+
+## Resolution
+Assumptions, by all three reporters, appeared to have played a part in their improper maintenance procedure when they used the Boeing process specification (Spec), instead of the component maintenance manual (CMM) for determination of a repair to the fuel supply line.

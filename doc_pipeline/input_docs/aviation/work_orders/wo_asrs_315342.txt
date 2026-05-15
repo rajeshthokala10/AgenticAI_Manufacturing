@@ -1,0 +1,9 @@
+Work Order: wo:asrs:315342
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+aircraft equip prob. engine malfunction.
+
+## Resolution
+ENG MALFUNCTION. I RETURNED TO FULLERTON. SEVERAL MAYDAY CALLS WENT UNANSWERED. I LANDED ON THE N PARALLEL TXWY BACKDOOR. NO DAMAGE. INSPECTED ENG WITH NO CONCLUSIVE CAUSE.

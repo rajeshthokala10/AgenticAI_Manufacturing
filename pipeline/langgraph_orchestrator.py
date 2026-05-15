@@ -47,7 +47,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 try:
     from langgraph.graph import END, START, StateGraph
@@ -73,6 +73,7 @@ from config import (
     HITL_DB_PATH,
     HITL_RISK_THRESHOLD,
     MAX_CRITIC_RETRIES,
+    PROCEDURE_MODEL,
     RETRY_MODEL,
     TOOL_PLANNER_MODEL,
     TOOL_PLANNER_USE_LLM,
@@ -80,9 +81,11 @@ from config import (
     USE_CAUSE_RANKING,
     USE_GUARDRAILS,
     USE_HITL,
+    USE_PROCEDURE_DRAFTING,
     USE_SEMANTIC_CACHE,
     USE_TOOLS,
 )
+from core.cause_ranker import _intent_is_troubleshooting
 from core.cause_ranker import format_for_prompt as format_causes_for_prompt
 from core.cause_ranker import rank_causes
 from core.criticality_classifier import classify as classify_risk
@@ -90,12 +93,25 @@ from core.critic import critic_evaluate
 from core.guardrails import evaluate as guardrails_evaluate, merge_into_critic
 from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm_with_metrics
+from core.procedure_drafter import draft_procedure, render_as_markdown
 from core.purchase_request import detect_and_enrich as detect_purchase_request
 from core.purchase_request import format_for_review as format_purchase_review
 from core.query_formatter import format_query
 from core.retrieval.hybrid_retriever import HybridRetriever
 
 logger = logging.getLogger("pipeline.langgraph")
+
+
+_STREAM_SCRUB_KEYS = {"raw_response"}
+
+
+def _scrub_for_stream(update: Any) -> Any:
+    """Strip oversized debug fields from a node update before SSE emission."""
+    if isinstance(update, dict):
+        return {k: _scrub_for_stream(v) for k, v in update.items() if k not in _STREAM_SCRUB_KEYS}
+    if isinstance(update, list):
+        return [_scrub_for_stream(x) for x in update]
+    return update
 
 
 ANSWER_SYSTEM_PROMPT = """You are a manufacturing diagnostic copilot. You provide evidence-grounded answers
@@ -132,6 +148,7 @@ class GraphState(TypedDict, total=False):
     graph_context: Dict[str, Any]
     allow_list: List[str]
     cause_ranking: Dict[str, Any]
+    procedure: Dict[str, Any]   # {steps: [{step, action, citations}], …}
     answer: str
     attempts: List[Dict[str, Any]]
     attempt_idx: int
@@ -239,6 +256,66 @@ class LangGraphOrchestrator:
             cache.put(raw_query, response, namespace="diagnostic")
         return response
 
+    def stream_query(
+        self,
+        raw_query: str,
+        thread_id: Optional[str] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """Run the pipeline and yield per-node updates incrementally.
+
+        Each yielded item is a dict of the form::
+
+            {"event": "node_update", "node": "<name>", "update": {...}}
+            {"event": "complete",    "response": {...}}                # last
+            {"event": "interrupted", "response": {...}}                # HITL pause
+
+        This matches piston's ``graph.stream(stream_mode="updates")`` shape
+        so a Streamlit / SSE client can render each section as soon as the
+        corresponding node finishes, rather than blocking on the full
+        retrieval → answer → critic loop.
+        """
+        total_start = time.time()
+        thread_id = thread_id or f"thr_{uuid.uuid4().hex[:12]}"
+
+        # Stream-mode does not consult the semantic cache — every event matters
+        # for the front-end progress bar. Callers wanting cache hits should
+        # use ``process_query``.
+
+        initial: GraphState = {
+            "raw_query": raw_query,
+            "attempts": [],
+            "attempt_idx": 0,
+            "llm_metrics": {
+                "prompt_tokens": 0, "completion_tokens": 0,
+                "total_tokens": 0, "cost_estimate": 0.0,
+                "model": ANSWER_MODEL,
+            },
+            "timings": {},
+            "thread_id": thread_id,
+        }
+        config = {"configurable": {"thread_id": thread_id}}
+
+        for chunk in self.graph.stream(initial, config=config, stream_mode="updates"):
+            # Chunks look like {"node_name": {update_dict}}.
+            for node_name, update in chunk.items():
+                yield {
+                    "event": "node_update",
+                    "node": node_name,
+                    "update": _scrub_for_stream(update),
+                    "thread_id": thread_id,
+                }
+
+        # After the stream ends we still need to surface the final response
+        # (or the interrupt payload) so the consumer can finalize its UI.
+        snapshot = self.graph.get_state(config)
+        final_state: GraphState = dict(getattr(snapshot, "values", {}) or {})
+        response = self._wrap_run(raw_query, thread_id, final_state, total_start)
+        yield {
+            "event": "interrupted" if response.get("awaiting_approval") else "complete",
+            "response": response,
+            "thread_id": thread_id,
+        }
+
     def resume(
         self,
         thread_id: str,
@@ -326,6 +403,7 @@ class LangGraphOrchestrator:
         g.add_node("retrieve", self._retrieve_node)
         g.add_node("tools_read", self._tools_read_node)
         g.add_node("rank_causes", self._rank_causes_node)
+        g.add_node("draft_procedure", self._draft_procedure_node)
         g.add_node("generate", self._generate_node)
         g.add_node("criticality_check", self._criticality_node)
         g.add_node("human_approval", self._human_approval_node)
@@ -342,9 +420,22 @@ class LangGraphOrchestrator:
         g.add_conditional_edges(
             "tools_read",
             self._route_after_retrieve,
-            {"rank_causes": "rank_causes", "generate": "generate"},
+            {
+                "rank_causes": "rank_causes",
+                "draft_procedure": "draft_procedure",
+                "generate": "generate",
+            },
         )
-        g.add_edge("rank_causes", "generate")
+        # After rank_causes the graph picks between the two-stage
+        # procedure drafter and the free-form answer generator.
+        g.add_conditional_edges(
+            "rank_causes",
+            self._route_after_rank_causes,
+            {"draft_procedure": "draft_procedure", "generate": "generate"},
+        )
+        # The procedure node also feeds into the criticality gate so its
+        # output is critic-validated and HITL-gated like any answer.
+        g.add_edge("draft_procedure", "criticality_check")
         # HITL gate sits between answer generation and the critic so that any
         # inline edits an approver makes still get critic-validated. When HITL
         # is disabled the criticality node returns immediately with score=0.
@@ -505,6 +596,38 @@ class LangGraphOrchestrator:
         timings["cause_ranking_ms"] = (time.time() - t0) * 1000
         return {
             "cause_ranking": result,
+            "llm_metrics": self._merge_metrics(state.get("llm_metrics", {}), result),
+            "timings": timings,
+        }
+
+    def _draft_procedure_node(self, state: GraphState) -> Dict[str, Any]:
+        """Two-stage generation — structured procedure drafting.
+
+        Active only for troubleshooting intents when
+        ``USE_PROCEDURE_DRAFTING=true``. Sets ``state['procedure']`` and
+        rewrites ``state['answer']`` to the markdown rendering so the
+        downstream critic + guardrails operate on the same surface they
+        always have.
+        """
+        t0 = time.time()
+        formatted = state.get("formatted", {}) or {}
+        cause_ranking = state.get("cause_ranking") or {}
+        cause_candidates = cause_ranking.get("candidates", []) if cause_ranking else []
+        evidence = state.get("evidence", [])
+
+        result = draft_procedure(
+            query=formatted.get("expanded", state["raw_query"]),
+            cause_candidates=cause_candidates,
+            evidence_chunks=evidence,
+            model=PROCEDURE_MODEL,
+        )
+        rendered = render_as_markdown(result.get("procedure", {})) or ""
+
+        timings = dict(state.get("timings", {}))
+        timings["procedure_drafting_ms"] = (time.time() - t0) * 1000
+        return {
+            "procedure": result,
+            "answer": rendered,
             "llm_metrics": self._merge_metrics(state.get("llm_metrics", {}), result),
             "timings": timings,
         }
@@ -675,19 +798,30 @@ class LangGraphOrchestrator:
     # ─── Routing ─────────────────────────────────────────────────────────
 
     def _route_after_retrieve(self, state: GraphState) -> str:
-        """Branch into the cause-ranking node only when the feature is enabled
-        and the query intent looks like troubleshooting.
+        """Branch into the cause-ranking node, the procedure drafter, or the
+        free-form answer generator depending on feature flags + intent.
 
-        The ranker itself is also intent-gated, so this is just a graph-level
-        short-circuit to keep the trace clean for non-troubleshooting queries.
+        Decision matrix (after retrieval finishes):
+
+        * cause-ranking ON + troubleshooting intent     → rank_causes
+        * procedure-drafting ON + troubleshooting       → draft_procedure
+        * otherwise                                     → generate
         """
-        if not USE_CAUSE_RANKING:
-            return "generate"
         formatted = state.get("formatted", {}) or {}
-        from core.cause_ranker import _intent_is_troubleshooting  # local import to avoid cycle
+        troubleshooting = _intent_is_troubleshooting(formatted.get("intent"))
 
-        if _intent_is_troubleshooting(formatted.get("intent")):
+        if USE_CAUSE_RANKING and troubleshooting:
             return "rank_causes"
+        if USE_PROCEDURE_DRAFTING and troubleshooting and state.get("evidence"):
+            return "draft_procedure"
+        return "generate"
+
+    def _route_after_rank_causes(self, state: GraphState) -> str:
+        """After cause-ranking, optionally hand off to the procedure drafter."""
+        formatted = state.get("formatted", {}) or {}
+        troubleshooting = _intent_is_troubleshooting(formatted.get("intent"))
+        if USE_PROCEDURE_DRAFTING and troubleshooting and state.get("evidence"):
+            return "draft_procedure"
         return "generate"
 
     def _route_after_critic(self, state: GraphState) -> str:
@@ -795,6 +929,7 @@ class LangGraphOrchestrator:
         allow_list = state.get("allow_list", [])
 
         cause_ranking = state.get("cause_ranking")
+        procedure = state.get("procedure")
 
         return {
             "query": {
@@ -813,6 +948,7 @@ class LangGraphOrchestrator:
                 else "no filter",
             },
             "cause_ranking": cause_ranking,
+            "procedure": procedure,
             "purchase_request": state.get("purchase_request"),
             "risk": state.get("risk"),
             "human_decision": state.get("human_decision"),
@@ -831,6 +967,7 @@ class LangGraphOrchestrator:
                 "retrieval_ms": timings.get("retrieval_ms", 0.0),
                 "tools_read_ms": timings.get("tools_read_ms", 0.0),
                 "cause_ranking_ms": timings.get("cause_ranking_ms", 0.0),
+                "procedure_drafting_ms": timings.get("procedure_drafting_ms", 0.0),
                 "criticality_ms": timings.get("criticality_ms", 0.0),
                 "generation_ms": timings.get("generation_ms", 0.0),
                 "retry_ms": timings.get("retry_ms", 0.0),

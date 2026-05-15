@@ -1,0 +1,9 @@
+Work Order: wo:asrs:415117
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plts of a c172 experienced partial pwr loss during departure climb during an ifr dual training flt. engine sputtered and then ran smooth again. however, the instructor plt canceled ifr clrnc and return land for precautionary reasons.
+
+## Resolution
+ON TKOF RWY 7L AT DAB, MY STUDENT AND I WERE AT 1800 FT CLBING TO 2000 FT ON A 110 DEG VECTOR. AT APPROX 1800 FT, THE ENG SPUTTERED AND AN RPM LOSS WAS NOTED (300-400 RPM). THE ENG THEN BEGAN TO RUN SMOOTH AGAIN. NO EMER WAS DECLARED, IFR CLRNC WAS CANCELED, AND RETURNED TO DAB WITHOUT INCIDENT.

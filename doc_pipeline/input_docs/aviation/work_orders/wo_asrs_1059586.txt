@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1059586
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c182 lost power at 9,000 ft in cruise, then began running rough so the pilot declared an emergency when number 1 egt was seen low and diverted to a nearby airport. the engine seemed to recover somewhat during descent.
+
+## Resolution
+Great pilotage.

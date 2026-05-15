@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1171068
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+general aviation pilot reports landing at winsted airport after noting some engine roughness. upon reaching the apron he is approached by a vehicle and the driver informs that the airport is closed. aircraft were in the pattern both before and after the incident with no mention of the airport being closed on the ctaf. notam's for winsted were not checked prior to flight due to no intention to land there.
+
+## Resolution
+An emergency declared or otherwise, would trump a NOTAM for a closed runway if it existed.

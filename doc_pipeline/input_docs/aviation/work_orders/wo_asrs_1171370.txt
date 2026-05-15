@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1171370
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+piper cub pilot experiences a rough running engine at 3,000 feet agl and elects to land in an open field. the engine continues to run but will not produce significant power.
+
+## Resolution
+It does not appear that the oil leak was a contributing factor to this engine malfunction, but bad fuel or ignition problems are a possibility. Properly handled.

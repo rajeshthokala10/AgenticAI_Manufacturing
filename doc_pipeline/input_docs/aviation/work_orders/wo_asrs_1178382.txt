@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1178382
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c182 pilot experiences a rough running engine at 6,000 ft and accepts vectors to the nearest suitable airport. arriving overhead at 4,900 ft with the engine still producing power, a gliding circling approach is planned and executed successfully. maintenance discovers that bent pushrods were the cause of the rough running engine.
+
+## Resolution
+Properly handled. A nearby airport and an engine that continued to run simplified the task.

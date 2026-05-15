@@ -1,0 +1,9 @@
+Work Order: wo:asrs:868985
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a line mechanic reports he inadvertently missed reconnecting the ignitor cables to the ignitor exciter boxes on # 2 engine of a b737-500, while working outside in windy, below freezing temperatures. he apparently performed the ignitor pop check on the incorrect engine.
+
+## Resolution
+During Graveyard shift, I was assigned to a B737-500 aircraft, at which time temperatures were below freezing and wind chills below 20 degrees. During these extremely cold temperatures, I was working on the Number two engine Ignitor plug replacement and Ignition lead Inspection. I was working quickly due to the weather. Upon completion of the work while trying to avoid further exposure to the cold weather, I inadvertently missed reconnecting the Exciter boxes to the Ignition cables. While in the Cockpit to perform the Pop Check, I sat in the left seat and opened the window to listen and apparently performed the Pop Check on the incorrect engine. At the same time I became aware of this issue, the Dayshift Crew had already identified and corrected the problem.

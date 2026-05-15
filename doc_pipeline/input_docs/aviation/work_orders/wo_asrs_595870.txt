@@ -1,0 +1,9 @@
+Work Order: wo:asrs:595870
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a pa28-181 cfi performs an emer off arpt landing when his engine stops running during a night op 15 mi se of zzz vor, us.
+
+## Resolution
+ENG STOPPAGE AT CRUISE. CAUSE UNKNOWN AT THIS TIME. USE OF EMER CHKLIST EMPLOYED. FUEL PUMP ON, MIXTURE RICH, CHANGED TANKS, ETC. BELIEVED TO BE IGNITION SYS FAILURE.

@@ -7,8 +7,13 @@ class GraphRetriever:
     def __init__(self, knowledge_graph: KnowledgeGraph):
         self.kg = knowledge_graph
 
-    def get_allow_list(self, query: str) -> Set[str]:
-        return self.kg.get_allow_list(query)
+    def get_allow_list(
+        self,
+        query: str,
+        *,
+        min_confidence: float = 0.0,
+    ) -> Set[str]:
+        return self.kg.get_allow_list(query, min_confidence=min_confidence)
 
     def get_edge_priors(self, chunk_ids: Set[str]) -> Dict[str, float]:
         return self.kg.get_edge_priors(chunk_ids)

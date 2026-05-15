@@ -1,0 +1,9 @@
+Work Order: wo:asrs:881772
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a light sport aircraft pilot reported that he accidentally started the aircraft's engine when he was partially in the cockpit. the pilot fell to the ground leaving the aircraft to taxi empty and strike another aircraft.
+
+## Resolution
+I went to the airport to charge the aircraft battery and clean same as it had not been run for some time. Twelve days later I went back to further charge the battery and clean same. After the battery had been on charge for about half an hour, I disconnected the battery, entered the cockpit and attempted to start the aircraft. It did not start. I pulled the aircraft from the hangar so it could be in the sun, chocked the front nose wheel, performed a routine preflight inspection, opened the cowling and examined the engine. It looked ok. I left the cowling open, started to enter the cockpit and while doing so, the aircraft started. At the time the aircraft had started, I had my right leg in the cockpit, my left leg was on the ground and I was getting into the aircraft. I do not know why the aircraft started perhaps I inadvertently touched the ignition while trying to enter the cockpit. I had no intention of flying the aircraft; I just wanted to start the engine so it could run a short while. When the aircraft started, it moved forward, over the nose wheel chock and made a left turn. About that time, I fell to the ground. The aircraft proceeded across the pavement and struck a parked corporate jet causing damage to both aircraft.

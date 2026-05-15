@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1042844
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c150 pilot reports a slight engine roughness while towing a banner at 1,000 feet. toward the end of the flight more pronounced roughness appears then clears on its own. when the roughness appears again the decision to land at the nearest airport is made but decreasing power results in dropping the banner and landing in a field.
+
+## Resolution
+If the reporter had taken his own advise he might have landed at an airport.  An aircraft that might have engine problems is not suitable for towing banners.
