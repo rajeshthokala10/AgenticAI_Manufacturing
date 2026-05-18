@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1025088
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b747 fuel indication system was meled prior to departure and the quantity became erratic in flight. at one point, the tank one pumps indicated amber and the engine rpm rolled back until pump override was selected.
+
+## Resolution
+That must have been unnerving over not too friendly airspace.

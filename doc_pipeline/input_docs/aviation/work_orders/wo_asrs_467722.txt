@@ -1,0 +1,9 @@
+Work Order: wo:asrs:467722
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plt of a banner towing piper pa18 made an off arpt forced landing on a golf course when his engine quit at 1000 ft and restarting attempts failed. the aircraft received minor damage and there were no injuries.
+
+## Resolution
+WHILE ENRTE TO HWO AT 1000 FT APPROX 3 MI E OF ARPT, THE ENG SPUTTERED THEN STOPPED. I WENT THROUGH EMER ENG FAILURE PROCS BUT COULD NOT GET ENG TO RESTART. I VISUALLY HAD FUEL AVAILABLE SO I BELIEVE THE PROB TO BE WITH THE MAGNETOS OR CARB SYS. I MADE A LNDG ON A GOLF COURSE AFTER ESTABLISHING A GLIDE SPD THAT WOULD GIVE ME THE MOST TIME TO LAND SAFETY. I WAS NOT INJURED AND NO ONE ON THE GND WAS NEAR ME. THE ACFT HAD MINIMAL DAMAGE TO THE CARB BOX AND ALTERNATOR.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:423010
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a fokker 100 on #2 engine start the engine would not start on #1 ignition sys. crew inadvertently deferred #2 ignition sys per the mel.
+
+## Resolution
+#2 ENG WOULD NOT START USING THE #1 IGNITION SYS. ENG STARTED NORMALLY USING THE #2 IGNITION SYS. CHKED MEL. REFED WRONG MEL NUMBER. REALIZED THIS WHEN I RECHKED MY WORK ENRTE. ON THE GND AT EWR, I MISTAKENLY REFED THE #2 IGNITION SYS INSTEAD OF THE MALFUNCTIONING #1 IGNITION SYS. NOTIFIED DISPATCH AND COMPLIED WITH ALL THE ITEMS REQUIRED FOR AN INOP #1 IGNITION SYS.

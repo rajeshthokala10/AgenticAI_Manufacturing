@@ -1,0 +1,9 @@
+Work Order: wo:asrs:588193
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c172 cfi rpted that the engine went out during a touch and go at fl57, causing damage to the aircraft during an emer landing
+
+## Resolution
+DURING PROCESS OF TOUCH AND GO LNDG, ENG FALTERED AFTER GAR INITIATED. MADE EMER LNDG AND RAN OFF END OF RWY DAMAGING ACFT.

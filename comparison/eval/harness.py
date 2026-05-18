@@ -132,7 +132,24 @@ class EvalHarness:
             rec.latency_ms = float(metrics.get("total_latency_ms", elapsed))
             rec.cost_usd = float(metrics.get("cost_estimate_usd", 0.0) or 0.0)
             rec.tokens = int(metrics.get("total_tokens", 0) or 0)
-            scored = score_record(answer, evidence, item)
+
+            # Hard-target metrics need the cause-ranker's output + the
+            # clarifier's extracted subsystem entity. These are only
+            # populated for the hybrid_graphrag pipeline (other pipelines
+            # don't have them) so the score_record call is robust to
+            # missing keys.
+            cause_ranking = result_dict.get("cause_ranking")
+            clarification: Dict[str, Any] = {}
+            if isinstance(result_dict.get("entities"), list):
+                clarification["entities"] = result_dict["entities"]
+            elif isinstance(result_dict.get("clarification"), dict):
+                clarification = result_dict["clarification"]
+
+            scored = score_record(
+                answer, evidence, item,
+                cause_ranking=cause_ranking,
+                clarification=clarification,
+            )
             rec.metrics = scored
             rec.citations = scored.get("citation_accuracy", 0.0) and 1 or 0
         except Exception as exc:  # pragma: no cover - eval should not crash
@@ -232,8 +249,9 @@ class EvalHarness:
             "pipeline", "n", "faithfulness", "answer_relevancy",
             "context_precision", "citation_accuracy",
             "must_mention_coverage", "guardrail_pass_rate",
-            "forbidden_violation_rate", "avg_latency_ms",
-            "total_cost_usd", "avg_tokens",
+            "forbidden_violation_rate",
+            "top_cause_match_rate", "subsystem_match_rate",
+            "avg_latency_ms", "total_cost_usd", "avg_tokens",
         ]
         lines.append("| " + " | ".join(cols) + " |")
         lines.append("|" + "|".join(["---"] * len(cols)) + "|")

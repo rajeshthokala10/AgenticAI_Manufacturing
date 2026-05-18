@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1209003
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+lsa pilot reports forgetting to remove cowling plugs during preflight resulting in high cht shortly after takeoff. the anomaly is quickly detected and the aircraft is landed in the remaining runway.
+
+## Resolution
+Although the anomaly was self inflicted, kudos for quickly detecting the problem and landing. This action may have saved the engine and avoided an off airport landing.

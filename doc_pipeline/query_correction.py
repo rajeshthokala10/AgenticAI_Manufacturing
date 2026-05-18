@@ -198,13 +198,61 @@ COMMON_ENGLISH_WORDS = {
 }
 
 
-class QueryCorrector:
-    """Corrects and enhances user queries using manufacturing domain knowledge."""
+def _schema_corrections(domain: str) -> dict | None:
+    """Return the ``corrections:`` block from ``schemas/<domain>.yaml`` or None."""
+    try:
+        from config import schema_path
+        import yaml as _yaml
+        raw = _yaml.safe_load(schema_path(domain).read_text()) or {}
+    except Exception:
+        return None
+    return raw.get("corrections") if isinstance(raw, dict) else None
 
-    def __init__(self, custom_vocabulary: set[str] | None = None):
+
+class QueryCorrector:
+    """Corrects and enhances user queries using manufacturing domain knowledge.
+
+    The class also accepts a ``domain`` argument: when set, an optional
+    ``corrections:`` block in ``schemas/<domain>.yaml`` extends the
+    built-in dictionaries (acronyms, synonyms, misspellings, vocabulary)
+    so adding a new domain's spelling/acronym hints is a single-file edit.
+    """
+
+    def __init__(
+        self,
+        custom_vocabulary: set[str] | None = None,
+        domain: str | None = None,
+    ):
         self.vocabulary = MANUFACTURING_VOCABULARY.copy()
         if custom_vocabulary:
             self.vocabulary.update(custom_vocabulary)
+
+        # Schema-driven extras (per-domain). Mutates the module-level dicts
+        # on instance state — we shadow them so module-level state stays
+        # untouched (preserves back-compat for anything that imports the
+        # constants directly).
+        self.acronym_expansions = dict(ACRONYM_EXPANSIONS)
+        self.domain_synonyms = {k: list(v) for k, v in DOMAIN_SYNONYMS.items()}
+        self.common_misspellings = dict(COMMON_MISSPELLINGS)
+
+        if domain:
+            extras = _schema_corrections(domain)
+            if extras:
+                # Schema entries take precedence over the manufacturing
+                # defaults — a domain's YAML can override an acronym
+                # mapping if needed.
+                for k, v in (extras.get("acronyms") or {}).items():
+                    self.acronym_expansions[str(k).lower()] = str(v)
+                for k, v in (extras.get("misspellings") or {}).items():
+                    self.common_misspellings[str(k).lower()] = str(v).lower()
+                for k, vs in (extras.get("synonyms") or {}).items():
+                    self.domain_synonyms.setdefault(str(k).lower(), [])
+                    self.domain_synonyms[str(k).lower()].extend(
+                        str(s).lower() for s in (vs if isinstance(vs, list) else [vs])
+                    )
+                for w in (extras.get("vocabulary") or []):
+                    self.vocabulary.add(str(w))
+
         single_word_vocab = {w for w in self.vocabulary if " " not in w}
         self.vocab_list = sorted(single_word_vocab)
         self.protected_words = COMMON_ENGLISH_WORDS
@@ -240,8 +288,8 @@ class QueryCorrector:
         for word in words:
             lower = word.lower().strip(",.;:!?")
 
-            if lower in COMMON_MISSPELLINGS:
-                replacement = COMMON_MISSPELLINGS[lower]
+            if lower in self.common_misspellings:
+                replacement = self.common_misspellings[lower]
                 corrected.append(replacement)
                 fixes.append(f"spelling: '{word}' → '{replacement}'")
                 continue
@@ -272,8 +320,8 @@ class QueryCorrector:
 
         for word in words:
             lower = word.lower().strip(",.;:!?")
-            if lower in ACRONYM_EXPANSIONS:
-                expansion = ACRONYM_EXPANSIONS[lower]
+            if lower in self.acronym_expansions:
+                expansion = self.acronym_expansions[lower]
                 expanded_parts.append(word)
                 if expansion.lower() not in query.lower():
                     fixes.append(f"acronym: {word} = {expansion}")
@@ -292,7 +340,7 @@ class QueryCorrector:
         added_terms = set()
         query_lower = query.lower()
 
-        for keyword, synonyms in DOMAIN_SYNONYMS.items():
+        for keyword, synonyms in self.domain_synonyms.items():
             if keyword in query_lower:
                 for syn in synonyms:
                     if syn.lower() not in query_lower and syn.lower() not in added_terms:

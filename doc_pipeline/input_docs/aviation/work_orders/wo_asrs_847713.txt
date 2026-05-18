@@ -1,0 +1,9 @@
+Work Order: wo:asrs:847713
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c210's right fuel tank was empty but the quantity gauge indicated nearly full. while making practice landings, the engine quit because the right tank was the selected fuel source. a dead stick landing was made to the airport.
+
+## Resolution
+Cessna returned to service after annual inspection in April 2009. Squawk for annual included intermittently reading right fuel gauge. On evening of August 2009 both tanks were topped off with fuel by trainee. Incident occurred during BFR with CFI in aircraft the following day. Examinee was demonstrating takeoff and landing for short field, soft field, etc with landing to full stop with taxi back. During final taxi back to takeoff: discussed with CFI use a right tank (fuller) tank for takeoff. After takeoff while turning from crosswind to downwind, engine failure noted. Aircraft was approximately 600 FT AGL. Aircraft turned back to airport, Tower notified, fuel pump activated, landing gear extended. Dead stick landing executed while diagonally crossing runway. Landing roll into infield breaking a taxiway light. No aircraft damage or bodily harm noted. Right fuel gauge showed nearly full fuel. Aircraft shut down. Visual inspection of the right fuel tank showed an empty tank. Fuel selector switched to left tank engine restarted and aircraft taxied back to hanger. Appointment has been made for inspection and repair of fuel gauges, examination for fuel leak, and inspection of airframe including landing gear after hard landing. This to be performed before aircraft is returned to service.

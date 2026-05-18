@@ -1,0 +1,9 @@
+Work Order: wo:asrs:511093
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an sma plt and pax experienced an engine failure cruising at 4500 ft.
+
+## Resolution
+IN CRUISE FLT OVER MCGUIRE AFB, NOTICED PROP RPM CHANGE AND NOTICED LOSS OF OIL PRESSURE. CALLED MCGUIRE APCH AND DECLARED AN EMER AND REQUESTED LNDG AT MCGUIRE AFB. LANDED ON RWY 24. CLRED ACTIVE RWY AND SHUT ACFT DOWN.

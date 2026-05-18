@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1125460
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 pilot experiences a backfiring engine during takeoff and elects to land on the remaining runway, which is successfully accomplished. two bad spark plugs are found to be the likely cause of the backfiring.
+
+## Resolution
+That will do it. The first backfire during the takeoff would have been enough for this Analyst to reject.

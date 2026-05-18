@@ -1,0 +1,11 @@
+Work Order: wo:asrs:1259566
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a small aircraft's engine intermittently shutdown after takeoff so the instructor took control from his student and returned to land where a fuel leak was discovered at the fuel strainer. frequent fuel strainer examination may lead to fatigue failure.
+
+## Resolution
+My student and I were in the traffic pattern at FPR practicing landings on Runway 10L. While my student was flying and on the third take off during the crosswind leg at an indicated altitude of about 800 feet, the engine stopped, went silent. I then immediately took controls, pitched for best glide speed, turned back toward Runway 28R and started to troubleshoot as per the checklist but could not find anything amiss. While gliding back engine came back to life again briefly for about 10 seconds at which point I decided to land on Runway 10R, but then the engine again stopped running. We then communicated this to ATC and we were cleared for, and glided to a landing on Runway 14. After landing the engine started running again and we taxied back to the ramp after being cleared to do so by ATC. During the post flight inspection it was discovered that there was fuel leaking at the point where the fuel strainer is connected to the fuel line and the electric fuel pump. This was not observed during the preflight inspection.
+
+Examine the fuel strainer more closely by opening the cowling and checking it for leaks while draining it. This is an area that is susceptible to fatigue because the fuel strainer is drained twice before every flight.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1035660
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa23 pilot experienced a loss of power just after takeoff and declared an emergency with the tower. after securing the left engine the pilot is able to return and land opposite direction on the departure runway. 250 ft agl is the maximum altitude attained during the flight.
+
+## Resolution
+The Aztec is notorious for being underpowered and the air temperature was likely very warm at departure time. Two hundred and fifty feet is extremely low to be circling back around with an engine out but perhaps that was the best the aircraft would do.

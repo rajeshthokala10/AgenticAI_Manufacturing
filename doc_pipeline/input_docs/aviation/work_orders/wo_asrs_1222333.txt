@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1222333
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa28 pilot reports departing on an ifr flight plan in imc. climbing to 7,000 feet power becomes insufficient to continue climbing. carburetor heat is tried along with fuel pump and switching tanks without success. atc is advised and a diversion planned but the aircraft runs out of altitude before reaching the airport and lands in a muddy field.
+
+## Resolution
+It does sound like carburetor ice but it is not clear why carburetor heat would not clear it up.

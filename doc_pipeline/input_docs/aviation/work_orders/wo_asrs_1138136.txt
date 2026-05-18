@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1138136
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c337 pilot experiences a loss of power in the rear engine shortly after takeoff and returns to the departure airport.
+
+## Resolution
+Properly handled.

@@ -1,0 +1,11 @@
+Work Order: wo:asrs:846286
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c150's engine would not start using normal engine start procedures. on the pilot's second troubleshooting attempt, he failed to turn the master and magneto's off and exited the aircraft. after he moved the propeller slightly, the engine started and taxied across the airport unattended.
+
+## Resolution
+I had the engine cowling removed to run engine to check for an oil leak. I pulled the handle to engage the starter. The engine did not spin over, starter did not engage. I exited the aircraft turning the Master and Mags off. I checked the wiring connection to the starter and moved the prop, everything seemed normal. I reentered the aircraft turned Master and Mags on, pulled starter cable, the starter did not engage again. I exited the aircraft again. As I walked by the prop I reached out and moved prop. The magneto fired and the engine started. I was not trying to hand prop the airplane, in fact I moved the prop just enough for the impulse coupling to fire. The aircraft sped off across taxiway through grass and across runway and flipped over on its back. I was unable to stop the airplane. 
+
+I was frustrated that the aircraft would not start. I got in a hurry the second time getting out of the aircraft neglected to do what was normal, turning Mags, Master, and Mixture off. When I moved the prop and the engine started it was clear that the Mags were either left ON or the mags were not grounded. After the airplane came to a stop the key switch was found in the ON position and the mixture was rich. After airplane came to a stop the mags, master, and mixture were turned off. Frustration led to inattention to the task at hand, operating in and around the aircraft in a safe manner. I did not follow normal checklist procedures prior to exiting the aircraft even though I was not going to fly the airplane.

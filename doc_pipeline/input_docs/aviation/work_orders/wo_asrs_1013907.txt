@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1013907
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 pilot experiences a rough running engine upon leveling off at 10,500 ft and leaning the engine for cruise. the reporter elects to spiral down over a nearby airport but when the engine returns to normal he decides to climb back up to 10,500 and return to the departure airport. this is accomplished successfully with no further engine troubles.
+
+## Resolution
+A long climb on a hot day will amplify the smallest defects in the ignition system. Perhaps a bad spark plug. It appears the reporter exercised reasonable caution when electing to return to the departure airport.

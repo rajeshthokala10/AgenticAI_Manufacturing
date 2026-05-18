@@ -3,30 +3,31 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from config import (
-    ANSWER_MODEL,
     CAUSE_RANK_TOP_K,
     GUARDRAILS_BLOCK_UNSAFE,
     GUARDRAILS_MIN_CITATIONS,
     GUARDRAILS_REQUIRE_CITATIONS,
     MAX_CRITIC_RETRIES,
-    RETRY_MODEL,
-    TOOL_PLANNER_MODEL,
     TOOL_PLANNER_USE_LLM,
     TOP_K_RERANK,
     USE_CAUSE_RANKING,
     USE_GUARDRAILS,
+    USE_PROCEDURE_DRAFTING,
     USE_SEMANTIC_CACHE,
     USE_TOOLS,
 )
+from core.llm_router import task_model
 from core.cause_ranker import (
-    _intent_is_troubleshooting,
+    _TROUBLESHOOTING_TRIGGERS,
     format_for_prompt as format_causes_for_prompt,
     rank_causes,
 )
 from core.critic import critic_evaluate
+from core.domain_prompts import get_prompt, procedure_should_run
 from core.guardrails import evaluate as guardrails_evaluate, merge_into_critic
 from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm_with_metrics
+from core.procedure_drafter import draft_procedure, render_as_markdown
 from core.query_formatter import format_query
 from core.retrieval.hybrid_retriever import HybridRetriever
 
@@ -79,8 +80,13 @@ class Orchestrator:
             self.retriever.build_indexes(skip_vector=self._skip_vector_build)
             self._indexed = True
 
+    @property
+    def _domain(self) -> Optional[str]:
+        return getattr(self.knowledge_graph, "domain", None)
+
     def process_query(self, raw_query: str) -> Dict:
         total_start = time.time()
+        domain = self._domain
 
         # ─── Semantic cache lookup ────────────────────────────────────────
         cache = self._get_cache()
@@ -95,7 +101,7 @@ class Orchestrator:
                 return cached
 
         fmt_start = time.time()
-        formatted = format_query(raw_query)
+        formatted = format_query(raw_query, domain=domain)
         fmt_time = (time.time() - fmt_start) * 1000
 
         search_query = formatted["structured_query"]
@@ -122,7 +128,9 @@ class Orchestrator:
         cause_ranking: Optional[Dict] = None
         cause_ranking_ms = 0.0
         cause_block = ""
-        if USE_CAUSE_RANKING and _intent_is_troubleshooting(formatted.get("intent")):
+        if USE_CAUSE_RANKING and procedure_should_run(
+            domain, formatted.get("intent"), _TROUBLESHOOTING_TRIGGERS,
+        ):
             cr_start = time.time()
             cause_ranking = rank_causes(
                 query=raw_query,
@@ -130,27 +138,67 @@ class Orchestrator:
                 evidence_chunks=retrieved_chunks,
                 graph_context=graph_info,
                 top_k=CAUSE_RANK_TOP_K,
+                domain=domain,
             )
             cause_ranking_ms = (time.time() - cr_start) * 1000
             cause_block = format_causes_for_prompt(cause_ranking.get("candidates", []))
 
-        user_prompt = (
-            f"QUERY: {formatted['expanded']}\n\n"
-            f"INTENT: {formatted['intent']}\n"
-            f"ENTITIES: {formatted['entities']}\n\n"
-            + (cause_block + "\n\n" if cause_block else "")
-            + (tool_block + "\n\n" if tool_block else "")
-            + f"EVIDENCE CHUNKS:\n{evidence_text}\n\n"
-            + "Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."
+        # ─── Two-stage generation (optional) ──────────────────────────────
+        # When the procedure drafter is enabled AND the query is a
+        # troubleshooting intent, we replace the free-form answer LLM with
+        # a structured procedure { steps: [{action, citations}] }. The
+        # markdown rendering of that procedure becomes the ``answer`` string
+        # so the critic + guardrails see the same surface they always have.
+        procedure_payload: Optional[Dict] = None
+        procedure_ms = 0.0
+
+        use_procedure = (
+            USE_PROCEDURE_DRAFTING
+            and procedure_should_run(
+                domain, formatted.get("intent"), _TROUBLESHOOTING_TRIGGERS,
+            )
+            and bool(retrieved_chunks)
         )
 
-        gen_start = time.time()
-        llm_result = call_llm_with_metrics(
-            system_prompt=ANSWER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            model=ANSWER_MODEL,
-        )
-        gen_time = (time.time() - gen_start) * 1000
+        if use_procedure:
+            proc_start = time.time()
+            procedure_payload = draft_procedure(
+                query=formatted["expanded"],
+                cause_candidates=(cause_ranking or {}).get("candidates", []),
+                evidence_chunks=retrieved_chunks,
+                model=task_model("procedure"),
+                domain=domain,
+            )
+            procedure_ms = (time.time() - proc_start) * 1000
+            answer = render_as_markdown(procedure_payload.get("procedure", {})) or ""
+            llm_result = {
+                "response": answer,
+                "prompt_tokens": procedure_payload.get("prompt_tokens", 0),
+                "completion_tokens": procedure_payload.get("completion_tokens", 0),
+                "total_tokens": procedure_payload.get("total_tokens", 0),
+                "cost_estimate": procedure_payload.get("cost_estimate", 0.0),
+                "model": procedure_payload.get("model", task_model("procedure")),
+            }
+            gen_time = procedure_ms
+        else:
+            user_prompt = (
+                f"QUERY: {formatted['expanded']}\n\n"
+                f"INTENT: {formatted['intent']}\n"
+                f"ENTITIES: {formatted['entities']}\n\n"
+                + (cause_block + "\n\n" if cause_block else "")
+                + (tool_block + "\n\n" if tool_block else "")
+                + f"EVIDENCE CHUNKS:\n{evidence_text}\n\n"
+                + "Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."
+            )
+
+            gen_start = time.time()
+            llm_result = call_llm_with_metrics(
+                system_prompt=get_prompt(domain, "answer_system", ANSWER_SYSTEM_PROMPT),
+                user_prompt=user_prompt,
+                model=task_model("answer"),
+            )
+            gen_time = (time.time() - gen_start) * 1000
+            answer = llm_result["response"]
 
         # Fold the cause-ranker's token spend into the running total so the
         # final metrics reflect the true cost of the query.
@@ -159,15 +207,15 @@ class Orchestrator:
             llm_result["completion_tokens"] += cause_ranking.get("completion_tokens", 0)
             llm_result["total_tokens"] += cause_ranking.get("total_tokens", 0)
             llm_result["cost_estimate"] += cause_ranking.get("cost_estimate", 0.0)
-
-        answer = llm_result["response"]
         critic_results = []
         final_verdict = None
         last_guardrail_report: Optional[Dict[str, Any]] = None
 
         for attempt in range(1, MAX_CRITIC_RETRIES + 1):
             crit_start = time.time()
-            critic_result = critic_evaluate(raw_query, answer, retrieved_chunks, attempt)
+            critic_result = critic_evaluate(
+                raw_query, answer, retrieved_chunks, attempt, domain=domain,
+            )
             crit_time = (time.time() - crit_start) * 1000
             critic_result["latency_ms"] = crit_time
 
@@ -218,9 +266,11 @@ EVIDENCE CHUNKS:
 Generate an improved answer that addresses the critic's concerns. Cite all sources."""
 
                 retry_result = call_llm_with_metrics(
-                    system_prompt=RETRY_SYSTEM_PROMPT.format(critic_feedback=feedback),
+                    system_prompt=get_prompt(
+                        domain, "retry_system", RETRY_SYSTEM_PROMPT,
+                    ).format(critic_feedback=feedback),
                     user_prompt=retry_prompt,
-                    model=RETRY_MODEL,
+                    model=task_model("answer"),
                 )
                 answer = retry_result["response"]
                 llm_result["prompt_tokens"] += retry_result["prompt_tokens"]
@@ -247,6 +297,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
                 "filter_ratio": f"{len(allow_list)}/{len(self.documents)}" if allow_list else "no filter",
             },
             "cause_ranking": cause_ranking,
+            "procedure": procedure_payload,
             "critic": {
                 "final_verdict": final_verdict,
                 "attempts": critic_results,
@@ -260,6 +311,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
                 "query_formatting_ms": fmt_time,
                 "retrieval_ms": ret_time,
                 "cause_ranking_ms": cause_ranking_ms,
+                "procedure_drafting_ms": procedure_ms,
                 "generation_ms": gen_time,
                 "prompt_tokens": llm_result["prompt_tokens"],
                 "completion_tokens": llm_result["completion_tokens"],
@@ -301,7 +353,7 @@ Generate an improved answer that addresses the critic's concerns. Cite all sourc
             raw_query,
             intent=intent,
             use_llm=TOOL_PLANNER_USE_LLM,
-            model=TOOL_PLANNER_MODEL,
+            model=task_model("tool"),
         )
         if not calls:
             return [], []

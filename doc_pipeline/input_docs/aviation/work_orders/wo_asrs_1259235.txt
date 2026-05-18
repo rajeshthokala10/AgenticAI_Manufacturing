@@ -1,0 +1,11 @@
+Work Order: wo:asrs:1259235
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pilot noticed a drop in oil pressure and loss of power. pilot landed in a field, resulting in aircraft damage and no injuries.
+
+## Resolution
+Approximately 15 miles out we noticed a drop in oil pressure, so we began looking for the nearest airport. Being familiar with the area we knew there were four airports nearby all of which were 15-20 miles away.
+
+ZZZ was as close as any and it was the least populated area. We attempted to climb as the oil pressure continued to decrease. At approximately 9 miles from ZZZ we lost oil pressure and the engine RPM dropped significantly (Approx. 800-1,000 rpm). We found a field just West of a highway and set up for an emergency landing. As we touched down we saw a ravine in the middle of the field. Unable to slow down before the ravine we kept up our speed up and lifted back off the ground until we were clear of the ravine. Setting down shortly thereafter the nose wheel dug into the ground and the nose gear broke free from the fuselage, we then slid on the belly of the airplane for a short while at which time the nose of the airplane dug in and the aircraft flipped onto its back coming to a full stop.

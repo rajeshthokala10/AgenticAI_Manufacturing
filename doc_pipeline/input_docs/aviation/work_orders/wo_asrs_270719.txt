@@ -1,0 +1,9 @@
+Work Order: wo:asrs:270719
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plt of an sma amateur aircraft made a forced landing on road after the engine lost pwr due to the spark plug lead wires falling off.
+
+## Resolution
+FLT FROM SEBRING TO LAKE WALES, ENG LOST PWR, LANDED ON HWY 27. NO PROBS TFC WAS LIGHT. (CAUSE: LOST PLUG WIRE.) SHERIFF'S DEPT REQUESTED IF ABLE TO DEPART, PLEASE DO SO. THEY BLOCKED TFC: ON LIFT OFF, POLICE CAR STOPPED TO SHOW ME WIRE, STRUCK LIGHT BAR REMOVING LENS, NO DAMAGE TO PLANE.

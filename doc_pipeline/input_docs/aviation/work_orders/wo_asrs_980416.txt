@@ -1,0 +1,9 @@
+Work Order: wo:asrs:980416
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+when the throttle stuck at partial power on the takeoff roll the pilot and instructor pilot of an m20t had no choice but to continue the takeoff at reduced power. enroute they regained vernier control but were unable to adjust power quickly enough on the flare to avoid a bounced/porpoised landing, which culminated in a prop strike.
+
+## Resolution
+One hopes that digging the throttle lock button loose with a knife wasn't considered adequate maintenance attention.

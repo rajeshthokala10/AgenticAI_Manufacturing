@@ -1,0 +1,9 @@
+Work Order: wo:asrs:895171
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 student with instructor experienced a rough running engine on the seventh touch and go. instructor assumed control and landed on the remaining runway and rolls 600 ft beyond the departure end.
+
+## Resolution
+I (pilot in command) then determined that the best course of action for the safest outcome was to make a precautionary landing on the remaining portion of the runway. We touched down with approximately 20 FT remaining and our ground roll was approximately 600 FT past the departure end of the runway into the grass. The occupants of the aircraft (myself and my student) were unharmed, persons and property were unharmed on the ground and the aircraft was undamaged.

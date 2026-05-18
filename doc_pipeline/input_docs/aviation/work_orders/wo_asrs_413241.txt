@@ -1,0 +1,9 @@
+Work Order: wo:asrs:413241
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an smt suffers loss of oil pressure which causes the plt to shut down the engine after departing sea. with all the emer activity the plt forgets to write up the engine failure in the logbook.
+
+## Resolution
+I WAS THE CAPT ON FLT DEPARTING SEA AT XA10. I HAD PARTIAL PWR LOSS ON R ENG, THEN 0 OIL PRESSURE. ENG WAS FEATHERED AND SECURED. DECLARED AN EMER AND LANDED BACK SAFELY IN SEA. I FORGOT TO WRITE UP A GRIPE SHEET ON THE INOP R ENG. OVERSIGHT ON MY PART!

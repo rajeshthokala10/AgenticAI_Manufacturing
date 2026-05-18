@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1259860
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 instructor pilot experiences a backfire and a large rpm drop climbing through 1,800 feet. the reporter immediately turns back to the departure airport and lands uneventfully with the engine running.
+
+## Resolution
+During run-up procedures there was nothing that showed abnormal with the aircraft. Run-up mag check was within limitations and fuel tanks were sumped without any indications of water or contaminates in the fuel. Short field takeoff showed engine instruments in the green before release of the brakes. Climb out with full throttle on a 050 heading we were passed to approach at 1,500 feet and they cleared us for 2,500 feet. While continuing to climb at 1,800 feet, the engine had a large RPM drop and backfired. After 3-4 seconds the engine restored power. Returned to the field and landed without assistance.

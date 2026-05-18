@@ -1,0 +1,8 @@
+{
+  "backend": "qdrant",
+  "collection": "ev_manufacturing_corpus",
+  "qdrant_url": "http://localhost:6333",
+  "qdrant_path": "/home/anil-y/app_ideas/manufacture/R_repo/AgenticAI_Manufacturing/doc_pipeline/vector_store/qdrant",
+  "dimension": 384,
+  "n_chunks": 417
+}

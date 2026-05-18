@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1181001
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 pilot experiences a power loss at 4,500 ft and diverts to a suitable airport. during descent power is regained then lost again over the field. no damage or injuries are reported.
+
+## Resolution
+Professionally handled by an experienced pilot.

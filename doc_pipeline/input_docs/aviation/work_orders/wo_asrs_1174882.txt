@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1174882
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+after takeoff on a night training flight, a fatigued pa-34 commercial student turned the left magneto off instead of turning the landing light off. the instructor, not knowing the engine failure cause, assumed control but failed to feather the engine and, unable to climb or accelerate, had great difficulty controlling the aircraft. the left flap and wing tip were damaged during landing which was followed by a brief runway excursion.
+
+## Resolution
+The student's report was left in to highlight the language issue. But these guys were very fortunate to have landed nearly safely with a wind milling propeller on an under powered aircraft.

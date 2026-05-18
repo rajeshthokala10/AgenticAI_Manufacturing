@@ -19,9 +19,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from config import CAUSE_RANK_MODEL, CAUSE_RANK_TOP_K
+from config import CAUSE_RANK_TOP_K, CAUSE_TAXONOMY
+from core.domain_prompts import get_prompt
+from core.llm_router import task_model
 from core.llm_client import call_llm_with_metrics
 
 logger = logging.getLogger("core.cause_ranker")
@@ -38,7 +40,20 @@ RULES:
 5. Rank from MOST LIKELY (top) to LEAST LIKELY (bottom).
 6. Return AT MOST {top_k} causes.
 7. If the query is not about troubleshooting / failure analysis, return an empty list [].
+{taxonomy_clause}
 8. No prose before or after the JSON. No markdown fences."""
+
+
+_TAXONOMY_CLAUSE_TEMPLATE = (
+    "7b. STRICT TAXONOMY: every \"cause\" value MUST be exactly one of: "
+    "[{taxonomy}]. Any cause outside this list will be discarded."
+)
+
+
+def _taxonomy_clause(taxonomy: Tuple[str, ...]) -> str:
+    if not taxonomy:
+        return ""
+    return _TAXONOMY_CLAUSE_TEMPLATE.format(taxonomy=", ".join(taxonomy))
 
 
 # Intent strings (from core/query_formatter or doc_pipeline/clarifier_agent) that
@@ -105,8 +120,16 @@ def _format_kg_causes(graph_context: Optional[Dict[str, Any]]) -> str:
     )
 
 
-def _parse_response(text: str, top_k: int) -> List[CauseCandidate]:
-    """Robustly parse the LLM's JSON output even if it's wrapped in fences/prose."""
+def _parse_response(
+    text: str,
+    top_k: int,
+    taxonomy: Tuple[str, ...] = (),
+) -> List[CauseCandidate]:
+    """Robustly parse the LLM's JSON output even if it's wrapped in fences/prose.
+
+    When ``taxonomy`` is non-empty, any cause outside the allow-list is
+    discarded (piston-style anti-hallucination guarantee).
+    """
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
@@ -125,11 +148,16 @@ def _parse_response(text: str, top_k: int) -> List[CauseCandidate]:
     if not isinstance(items, list):
         return []
 
+    allowed_lower = {c.lower() for c in taxonomy}
+
     for item in items:
         if not isinstance(item, dict):
             continue
         cause = str(item.get("cause", "")).strip()
         if not cause:
+            continue
+        if taxonomy and cause.lower() not in allowed_lower:
+            logger.debug("dropping out-of-taxonomy cause: %r", cause)
             continue
         try:
             score = float(item.get("score", 0.0))
@@ -162,17 +190,20 @@ def rank_causes(
     evidence_chunks: List[Dict[str, Any]],
     graph_context: Optional[Dict[str, Any]] = None,
     top_k: int = CAUSE_RANK_TOP_K,
-    model: str = CAUSE_RANK_MODEL,
+    model: Optional[str] = None,
+    taxonomy: Optional[Tuple[str, ...]] = None,
+    domain: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the cause-ranking LLM stage.
 
     Returns a dict with the ranked ``candidates`` plus LLM usage metrics, so
     the caller can fold token counts and cost into the overall response.
 
-    The function is *cheap* by default — ``CAUSE_RANK_MODEL`` defaults to
-    ``qwen2.5:3b`` (free, local via Ollama). Override with any OpenAI model
-    in ``.env`` if you prefer cloud quality.
+    The model defaults to the router's ``analyze`` task (cheap/fast under
+    every backend). Override surgically with an explicit ``model=`` arg.
     """
+    if model is None:
+        model = task_model("analyze")
     base_metrics: Dict[str, Any] = {
         "candidates": [],
         "prompt_tokens": 0,
@@ -188,6 +219,10 @@ def rank_causes(
     if not evidence_chunks:
         return {**base_metrics, "skipped": "no_evidence"}
 
+    active_taxonomy: Tuple[str, ...] = (
+        taxonomy if taxonomy is not None else CAUSE_TAXONOMY
+    )
+
     evidence_block = _format_evidence_for_ranking(evidence_chunks)
     kg_block = _format_kg_causes(graph_context)
     user_prompt = (
@@ -201,7 +236,12 @@ def rank_causes(
 
     try:
         llm_result = call_llm_with_metrics(
-            system_prompt=CAUSE_RANK_SYSTEM_PROMPT.format(top_k=top_k),
+            system_prompt=get_prompt(
+                domain, "cause_rank_system", CAUSE_RANK_SYSTEM_PROMPT,
+            ).format(
+                top_k=top_k,
+                taxonomy_clause=_taxonomy_clause(active_taxonomy),
+            ),
             user_prompt=user_prompt,
             temperature=0.1,
             max_tokens=600,
@@ -212,11 +252,12 @@ def rank_causes(
         return {**base_metrics, "error": str(exc)}
 
     raw = llm_result.get("response", "") or ""
-    candidates = _parse_response(raw, top_k)
+    candidates = _parse_response(raw, top_k, taxonomy=active_taxonomy)
 
     return {
         "candidates": [c.to_dict() for c in candidates],
         "raw_response": raw,
+        "taxonomy": list(active_taxonomy),
         "prompt_tokens": llm_result.get("prompt_tokens", 0),
         "completion_tokens": llm_result.get("completion_tokens", 0),
         "total_tokens": llm_result.get("total_tokens", 0),

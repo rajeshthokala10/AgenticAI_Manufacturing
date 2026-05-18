@@ -38,6 +38,7 @@ try:
         FAISS_IVF_MIN_CHUNKS, FAISS_NPROBE_CAP,
         DEFAULT_TOP_K, DEFAULT_CONTEXT_WINDOW,
         SUPPORTED_EXTENSIONS,
+        QDRANT_PATH, QDRANT_URL, QDRANT_COLLECTION,
         ensure_dirs,
     )
     PIPELINE_DIR = _PIPELINE_DIR
@@ -46,9 +47,12 @@ except Exception:
     INPUT_DOCS_DIR = _PIPELINE_DIR / "input_docs"
     VECTOR_STORE_DIR = _PIPELINE_DIR / "vector_store"
     OUTPUT_DIR = _PIPELINE_DIR / "output"
+    QDRANT_PATH = VECTOR_STORE_DIR / "qdrant"
+    QDRANT_URL = os.getenv("QDRANT_URL", "")
+    QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "manufacturing_corpus")
 
     INDEX_NAME = "manufacturing_index"
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
     SEMANTIC_SIMILARITY_THRESHOLD = 0.45
     SEMANTIC_MIN_CHUNK_SIZE = 100
@@ -69,5 +73,5 @@ except Exception:
     SUPPORTED_EXTENSIONS = (".pdf", ".txt", ".xlsx", ".xls")
 
     def ensure_dirs() -> None:
-        for d in (INPUT_DOCS_DIR, VECTOR_STORE_DIR, OUTPUT_DIR):
+        for d in (INPUT_DOCS_DIR, VECTOR_STORE_DIR, OUTPUT_DIR, QDRANT_PATH):
             d.mkdir(parents=True, exist_ok=True)

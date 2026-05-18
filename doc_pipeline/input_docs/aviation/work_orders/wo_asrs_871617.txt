@@ -1,0 +1,9 @@
+Work Order: wo:asrs:871617
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+aeronca pilot experiences engine failure shortly after takeoff and lands on a four lane highway without damage. a mechanic can find no deficiencies and the aircraft is flown back to the airport.
+
+## Resolution
+After fueling the plane completely, we did the pre-flight inspection and strained the fuel for contaminants. None were found. A thorough pre-flight was done and engine run up was completed as normal, including carburetor heat check and magneto check. On the initial climb out, at approximately 1.0 mile from the end of the runway, the engine lost power. Within 3 seconds it went from full throttle to no power. Upon realizing the runway was not an option for landing, a landing was made on a four lane highway. There was no damage to the plane or any property. A Mechanic came and inspected the aircraft. The aircraft ran fine in all flight attitudes on the ground. The Mechanic suspected a couple of things. There may have been water in the aft part of the fuel tank which is not able to be strained in the 3 point position. Upon leveling off at 450 AGL to look for traffic, the water may have gone into the engine at that point, possibly freezing. Upon engine failure, carb heat was applied but the engine was wind milling at that point. After straining the fuel on the ground and checking the aircraft engine and fuel system, the State Police blocked off the highway for 2 miles and the aircraft was test run on the ground for 20 minutes before taking off and flying back to the airport. Some possible ways to prevent this from happening again would be to top off the fuel tank after every flight, and have somebody lift the tail during preflight to strain the fuel from that position.

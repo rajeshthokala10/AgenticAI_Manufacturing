@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1050497
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+tb20 pilot discovers failed throttle linkage at 9,000 feet and with atc assistance a successful emergency landing is accomplished with the engine shut down on short final. a bolt was found to have fallen out of the throttle linkage. a rebuilt engine had been installed approximately eight months ago.
+
+## Resolution
+It is not clear what may have caused the bolt come out in the first place but installing a cotter pin will likely prevent a recurrence and kudos to the pilot for a safe landing in this emergency situation.

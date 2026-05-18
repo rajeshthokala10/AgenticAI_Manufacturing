@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1062585
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c206 pilot experiences a rough running engine just after takeoff on a very cold day and elects to return and land opposite direction on the departure runway. post flight discussions with an a&p mechanic reveal that high oil pressure may have produced the anomaly. the aircraft operates normally the next day.
+
+## Resolution
+This theory seems a little questionable, what do they do in Alaska?  No further problems were reported though, so perhaps the reporters diagnosis is correct.

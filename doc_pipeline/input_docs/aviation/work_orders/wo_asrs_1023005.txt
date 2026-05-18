@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1023005
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a c-414 right engine lost power after an auxiliary fuel pump electrical switch failed causing fuel starvation. the pilot lost altitude while switching fuel tanks to restore normal engine operation.
+
+## Resolution
+A couple of hundred feet is a small amount except when one considers the effect on the ego.

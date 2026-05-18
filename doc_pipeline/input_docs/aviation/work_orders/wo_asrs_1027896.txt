@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1027896
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+long ez pilot experiences loss of engine power during descent in humid conditions. carburetor heat does not solve the problem and the reporter elects to divert to a suitable airport. the engine continues to run and full power is restored once on the ground. carburetor ice is strongly suspected.
+
+## Resolution
+Carb ice is strongly suspected by this analyst also. The reporter has over 1,000 hours in this aircraft type and should have experienced this phenomenon previously.

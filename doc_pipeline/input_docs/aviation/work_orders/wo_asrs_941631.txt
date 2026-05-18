@@ -1,0 +1,9 @@
+Work Order: wo:asrs:941631
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b757 engine did not receive either fuel or ignition with the start selector in the both position but operated normally when 1 was selected. maintenance requested that the selector be left in both but the crew questioned the decision.
+
+## Resolution
+Aircraft had a placard MEL 74-1B that the start selector be left in both due to the right engine not starting with the Number 2 igniter selector. Previous flight had a write up that the right engine did not start in both (with MEL 74-1B active) and the Number 1 igniter was selected on a subsequent start and a successful start was made with "1" selected. Maintenance could not duplicate the writeup. We pushed away from the gate and on selecting the fuel lever for the right engine we observed no fuel flow, or light off. Remembering the previous writeup I aborted the start, waited for the engine to spool down and selected the number one igniter. Engine started normally just like the previous writeup. MEL said leave in both. I selected Number 1 like the previous flight did. Also enroute the First Officer and I were discussing the matter, decided it was not an igniter and wondered whether to use 1, or both. Sent a message to Maintenance, they said to use normal. No systems manual to assist us, no real help from Maintenance, we left it in both.

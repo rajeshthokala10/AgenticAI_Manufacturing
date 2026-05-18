@@ -1,0 +1,9 @@
+Work Order: wo:asrs:936296
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c421 single pilot experiences a rough running engine after takeoff on an ifr flight plan. prior to entering imc a request was made to the tower to turn downwind and remain visual below the 800 ft ceiling which is granted. imc was inadvertently entered and the tower advised that separation has been lost with ifr traffic on approach.
+
+## Resolution
+While climbing off the runway the right engine started running rough surging. I could still see the ground and decided that I could circle around to the downwind to land. I asked the Tower if that would be ok, while doing this I flew back into the clouds then decided to circle around to do the ILS approach. I was told there was traffic on the approach and needed to make an immediate turn eastbound and climb to 3,200. I did so and continued for the approach. Landed and shut down. After shutting down the Tower informed me that there was a possible pilot deviation because the separation between myself and another aircraft outside the marker was not maintained. When informed of the aircraft on the approach and received instruction to turn 090 and climb I did so immediately.

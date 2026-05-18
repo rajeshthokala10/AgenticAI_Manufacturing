@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1100571
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa-46 pilot reports fluctuating manifold pressure at fl210 and the inability to contact atc. a descent is initiated before communications can be established due to the possibility of losing cabin pressurization. at 16,000 feet map is normal and flight continues to destination.
+
+## Resolution
+Squawking 7700 before initiating descent would have been desirable with no communications, otherwise properly handled.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1237127
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa28 instructor pilot experiences low power during a stop and go takeoff and rejects.
+
+## Resolution
+The flight contained three people. An instructor in the back, a student in the front left seat and myself in the front right seat. We took off the first time to the west to do maneuvers. We did all of our maneuvers and headed back. We tried to land the first time and we did a go around because it was unstable. The second attempt was much better and we did a stop and go. When we were on the go I noticed that the engine didn't sound right and the RPM was only about 2,100 and the airspeed was not increasing fast enough so I aborted takeoff. Exited and taxied back to the ramp and shut down the plane.

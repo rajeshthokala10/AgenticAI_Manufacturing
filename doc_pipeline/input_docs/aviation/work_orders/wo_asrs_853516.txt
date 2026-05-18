@@ -1,0 +1,9 @@
+Work Order: wo:asrs:853516
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c182 pilot experienced power loss and back firing at 3500 ft and elected to divert to a closed airport where a safe landing occured.
+
+## Resolution
+VFR flight at 3500 FT MSL. Flight following from Center underway. Noticed sudden onset of backfiring engine with power loss. Unable to maintain altitude. Felt safest tact was nearest airfield (ZZZ) at about 260 for 8 miles. Did not feel comfortable with alternate about 25 miles east. Advised Center of problems and intentions. They advised ZZZ was closed (unsure why). Had good visibility throughout and good view of the field from 2 mile final with some power. The field seemed safe and unobstructed. Uneventful approach and landing to full stop on unobstructed southerly runway. Advised Center of safe landing via relay through other aircraft. Was told I need not call anyone else. Contacted my Mechanic who came to help. He found an exhaust valve with a fractured component requiring new cylinder. Plane left at field (off runway) until parts can be ordered and installed. Advised field's Manager of problem. Anticipate 2-4 days until repairs complete and able to fly the plane out.

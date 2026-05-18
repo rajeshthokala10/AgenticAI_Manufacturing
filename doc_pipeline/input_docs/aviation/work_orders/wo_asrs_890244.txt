@@ -1,0 +1,9 @@
+Work Order: wo:asrs:890244
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c210 pilot experiences complete engine failure shortly after takeoff and is able to glide back to the departure airport for a safe landing.
+
+## Resolution
+After takeoff and during initial climbout on crosswind leg, power failure occurred. "MayDay" was declared and a turn to land on runway at departure airport was initiated. Emergency procedures for an engine failure were followed with no success prior to landing. A successful landing was made and the aircraft was towed back to the hangar for investigation. Results of the investigation are pending.

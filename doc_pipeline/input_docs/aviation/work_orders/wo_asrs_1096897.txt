@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1096897
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a repair station aircraft/engine inspector (ia) reports about a summary of errors that contributed to five out of six incorrect cylinders being installed on a continental io-550b engine. the beech a36 bonanza had flown approximately 100 hours and one year when an oil analysis discovered high aluminum content in the oil.
+
+## Resolution
+Engine Components Inc. (ECI) was the Supplier that Reporter refers to for engine replacement parts they used on the Continental IO-550B type engine for the Beech A36/Bonanza-36 aircraft.  This Analyst suspects less expensive parts were sold through ECI instead of direct purchase through Continental Motors. Rebuilt IO-550B engine is approximately $37,000 to $38,000 dollars today. Improper Maintenance. Incorrect part installations. Quality Assurance. Reworked maintenance.

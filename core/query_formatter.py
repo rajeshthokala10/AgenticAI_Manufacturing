@@ -3,8 +3,9 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-from config import CLASSIFY_MODEL
+from core.domain_prompts import get_prompt
 from core.llm_client import call_llm
+from core.llm_router import task_model
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,11 @@ INTENT_PATTERNS = {
 }
 
 
-def format_query(raw_query: str, use_llm_classification: bool = True) -> Dict:
+def format_query(
+    raw_query: str,
+    use_llm_classification: bool = True,
+    domain: Optional[str] = None,
+) -> Dict:
     normalized = _normalize_text(raw_query)
     entities = _extract_entities(normalized)
     regex_intent, regex_confident = _classify_intent_regex(normalized)
@@ -82,7 +87,7 @@ def format_query(raw_query: str, use_llm_classification: bool = True) -> Dict:
         intent_method = "regex"
         intent_confidence = 1.0 if regex_confident else 0.0
     else:
-        llm_result = _classify_intent_llm(normalized, entities)
+        llm_result = _classify_intent_llm(normalized, entities, domain=domain)
         intent = llm_result["intent"]
         intent_method = "llm"
         intent_confidence = llm_result["confidence"]
@@ -176,7 +181,7 @@ def _classify_intent_regex(text: str) -> tuple:
     return best_intent, confident
 
 
-def _classify_intent_llm(text: str, entities: Dict) -> Dict:
+def _classify_intent_llm(text: str, entities: Dict, domain: Optional[str] = None) -> Dict:
     entity_hint = ""
     if entities:
         parts = []
@@ -188,11 +193,11 @@ def _classify_intent_llm(text: str, entities: Dict) -> Dict:
 
     try:
         response = call_llm(
-            system_prompt=CLASSIFY_SYSTEM_PROMPT,
+            system_prompt=get_prompt(domain, "classify_system", CLASSIFY_SYSTEM_PROMPT),
             user_prompt=user_prompt,
             temperature=0.0,
             max_tokens=50,
-            model=CLASSIFY_MODEL,
+            model=task_model("analyze"),
         )
         parsed = json.loads(response.strip())
         intent = parsed.get("intent", "general").lower()

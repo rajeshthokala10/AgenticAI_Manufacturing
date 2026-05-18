@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1063516
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+cessna 340 pilot shutdown the left engine in-flight after a loud sound was hear followed by violent shaking. post flight revealed the number two cylinder was split in half.
+
+## Resolution
+Engine cylinder failed in flight.

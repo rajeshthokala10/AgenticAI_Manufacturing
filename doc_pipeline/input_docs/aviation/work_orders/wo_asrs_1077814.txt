@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1077814
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c177 pilot on an ifr flight plan at 12,000 feet notes high cht and begins reducing power and descending without communicating with center. atc notes the descent then provides assistance when the descent is explained. an uneventful landing ensues.
+
+## Resolution
+It doesn't take very long to declare an emergency and ATC is a valuable tool in finding the nearest suitable airport. In this particular situation communication should have been given priority, as opposed to aviate and navigate.

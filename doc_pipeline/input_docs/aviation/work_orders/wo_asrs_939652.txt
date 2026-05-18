@@ -1,0 +1,16 @@
+Work Order: wo:asrs:939652
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+when a c182 low battery was incapable of pulling the engine through a compression stroke, the pilot exited the cockpit to pull the prop through in hopes a subsequent start attempt would be successful. unfortunately, he failed to turn off the ignition and the engine started when the prop was pulled through. an idle throttle setting and good brakes prevented the incident from escalating.
+
+## Resolution
+The airplane had been preflighted, pulled from the T-hangar and prepared for engine start.  I felt somewhat hurried, as the pilot in the T-hangar across the ramp was also preparing to leave and was waiting on me.  When I cranked the engine, it hung on a compression stroke.  The airplane had had an electrical problem on the previous flight, which I believed had been repaired but probably had left the battery weak.  I decided that if I pulled the engine through the compression stroke on which it was hanging, the starter would then be able to gain enough momentum to crank the engine through to a start.  You can probably guess what happened next.  The magnetos were still on, and when I pulled the prop through, the engine started.  Fortunately, I had treated the prop as if it were hot (not believing that it really was!), and the throttle was at idle, so I was able to return to the cockpit and shut the engine down.
+
+I learned (or was reminded of) the following lessons from this incident: 
+(1)  Mistakes happen when you rush things, and you always need to take the time to be safe. 
+(2)  Whenever you pull on the prop -- even if your purpose is not to start the engine -- chock the airplane and double-check to confirm that the magnetos are not on. 
+(3)  Even after confirming that the magnetos are not on, still treat them as if they are - a wire could be broken, or some other malfunction could occur.  Remain well clear of the prop arc.
+
+This was one of those events that over the years have happened way too many times, and I never thought something like this would happen to me.  I was fortunate that this incident was not more serious, and am reminded to be doubly vigilant about every aspect of aircraft operations -- even while parked on the ramp.

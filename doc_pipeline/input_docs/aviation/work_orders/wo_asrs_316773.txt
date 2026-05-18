@@ -1,0 +1,9 @@
+Work Order: wo:asrs:316773
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+in order to continue safely to the dest after a magneto failure, a plt entered class c airspace. frequency congestion made 2-way radio com impossible.
+
+## Resolution
+MAGNETO, R SIDE, STOPS WORKING! WORKING PBI APCH, THEN SWITCHED TO MIA APCH. AFTER 6 CALLS WITH MIA IN HVY TFC LOAD, SWITCHED TO FXE TWR AND LANDED ASAP DUE MECHANICAL CONDITION! UNABLE TO CONTACT MIA APCH TO ADVISE OF ALT CHANGE. ALT RPTING PROB MADE IT QUITE DIFFICULT WHILE ENRTE TO FXE ARPT! HVY RADIO TFC PREVENTED ORDERLY CHANGEOVER TO FXE TWR VIA PBI AND MIA APCH.

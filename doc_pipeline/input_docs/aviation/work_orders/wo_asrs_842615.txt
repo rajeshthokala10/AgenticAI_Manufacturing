@@ -1,0 +1,9 @@
+Work Order: wo:asrs:842615
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an md80 was dispatched with a wing fuel tank pump inoperative. after takeoff a center tank pump failed preventing center tank fuel from being used. unable to reach the destination on wing tank fuel alone an emergency was declared followed by an overweight landing.
+
+## Resolution
+Flight was dispatched with left forward fuel boost pump inoperative. Center aft boost pump was fixed previous night after multiple repeat write-ups. Shortly after takeoff the center aft boost pump circuit breaker popped. After accomplishing appropriate QRH procedure we were unable to burn any fuel from center tank. Total fuel in main tanks was inadequate to continue flight to the destination. Dispatch advised that the best option for diversion with regard to spare plane availability was departure airport. I elected to land overweight rather than burning fuel and landing at max normal landing weight since remaining main tank fuel would have been critically low and center tank fuel was not usable. I declared an emergency with ATC. Overweight landing was accomplished at 136,500 LBS, including 11,500 LBS of unusable fuel in center tank and approximately 5000 LBS fuel in each main tank. Landing was smooth with minimal braking. Airport rescue and fire fighting advised there was no abnormal indication on wheels or brakes and followed us to the gate as a precaution.

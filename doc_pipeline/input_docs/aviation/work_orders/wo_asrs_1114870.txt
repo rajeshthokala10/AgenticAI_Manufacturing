@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1114870
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa28 instructor pilot experiences a mysterious rpm drop while waiting for takeoff and elects to perform a second run-up. the run-up is normal and the flight takes off but rpm begins to decrease almost immediately. the tower is informed and the reporter is cleared for a short approach to the departure runway.
+
+## Resolution
+It is easy to see that the takeoff should have been rejected after the fact but was a difficult call during the takeoff. Better safe than sorry though.

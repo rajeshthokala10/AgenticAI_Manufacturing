@@ -1,0 +1,9 @@
+Work Order: wo:asrs:867674
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an a300 captain failed to fulfill all required actions for a deferred engine ignition system that was discovered after leaving the gate.
+
+## Resolution
+After block-out, we requested and received a maintenance deferral for a write-up for no start on engine 2,  ignition B (ignition A normal). We recorded the MEL, Maintenance Item and Authorization numbers in the logbook while at the hold line for Runway 35L. Not realizing that further action was required, I inadvertently departed without doing so.

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import math
 import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import List
 
 import pandas as pd
 import plotly.express as px
@@ -127,29 +129,173 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ── Pipeline bootstrap ──────────────────────────────────────────────────────
-@st.cache_resource(show_spinner="Building / loading the unified pipeline (FAISS + Knowledge Graph)...")
-def load_pipeline():
-    pipe = ManufacturingPipeline()
-    pipe.build_or_load(enable_llm=llm_available())
-    return pipe
+# ── Pipeline bootstrap (per domain) ─────────────────────────────────────────
+from config import (  # noqa: E402
+    DOMAINS,
+    DEFAULT_DOMAIN,
+    DOMAIN_DISPLAY,
+    DOMAIN_EXAMPLES,
+    DOMAIN_EMPTY_STATE,
+    DOMAIN_PLACEHOLDER,
+)
+
+# Every domain string surfaced to the UI lives in ``schemas/<domain>.yaml``
+# (display + examples + empty_state + placeholder blocks). The dicts below
+# are thin views over ``config.DOMAIN_*`` so new domains land for free.
+DOMAIN_LABELS: dict[str, str] = {d: DOMAIN_DISPLAY[d]["label"] for d in DOMAINS}
+DOMAIN_COLORS: dict[str, str] = {d: DOMAIN_DISPLAY[d]["color"] for d in DOMAINS}
+DOMAIN_EMOJI:  dict[str, str] = {d: DOMAIN_DISPLAY[d]["emoji"] for d in DOMAINS}
+
+EXAMPLE_QUERIES:    dict[str, list[str]] = DOMAIN_EXAMPLES
+EXAMPLE_PLACEHOLDER: dict[str, str]      = DOMAIN_PLACEHOLDER
+
+# A short, italicised one-liner under the chat empty-state heading. Derived
+# from the first three ``examples`` so adding a new domain doesn't require
+# authoring a separate hint.
+def _empty_state_hint(domain: str) -> str:
+    samples = (DOMAIN_EXAMPLES.get(domain) or [])[:3]
+    if not samples:
+        return ""
+    return " · ".join(f"<i>“{s}”</i>" for s in samples)
+
+EMPTY_STATE_HINTS: dict[str, str] = {d: _empty_state_hint(d) for d in DOMAINS}
+EMPTY_STATE_EMOJI: dict[str, str] = {d: DOMAIN_EMOJI[d] for d in DOMAINS}
 
 
-pipe = load_pipeline()
-LLM_ON = pipe.llm_enabled
+@st.cache_resource(show_spinner="Building / loading pipelines for both domains...")
+def load_pipelines() -> dict:
+    out: dict = {}
+    for d in DOMAINS:
+        p = ManufacturingPipeline(domain=d)
+        p.build_or_load(enable_llm=llm_available())
+        out[d] = p
+    return out
+
+
+PIPES = load_pipelines()
+
+
+# Active domain default — selector in the sidebar mutates this on every
+# rerun, and the module-level ``pipe`` / ``chat_agent`` below resolve
+# against whatever is in session_state at script-rerun time.
+if "active_domain" not in st.session_state:
+    st.session_state["active_domain"] = DEFAULT_DOMAIN
 
 
 @st.cache_resource(show_spinner=False)
-def get_chat_agent() -> ChatAgent:
-    return ChatAgent(pipe, max_optional_asks=1)
+def _chat_agent_for(domain: str) -> ChatAgent:
+    return ChatAgent(PIPES[domain], max_optional_asks=1)
 
 
-chat_agent = get_chat_agent()
+# Resolved once per Streamlit rerun. Every tab function reads this global,
+# so a sidebar selector change → rerun → ``pipe`` points at the new domain.
+ACTIVE_DOMAIN: str = st.session_state["active_domain"]
+pipe = PIPES[ACTIVE_DOMAIN]
+LLM_ON = pipe.llm_enabled
+chat_agent = _chat_agent_for(ACTIVE_DOMAIN)
+
+
+# ── Domain affordances ──────────────────────────────────────────────────────
+def domain_pill(domain: str | None) -> str:
+    """Return a small HTML pill marking which domain a chunk/turn belongs to."""
+    if not domain:
+        return ""
+    color = DOMAIN_COLORS.get(domain, "#64748B")
+    label = DOMAIN_LABELS.get(domain, domain.title())
+    emoji = DOMAIN_EMOJI.get(domain, "")
+    return (
+        f"<span style='display:inline-block;padding:1px 8px;border-radius:999px;"
+        f"background:{color}22;color:{color};font-size:0.72rem;"
+        f"font-weight:600;letter-spacing:.02em;border:1px solid {color}55;'>"
+        f"{emoji} {label}</span>"
+    )
+
+
+def domain_border_style(domain: str | None) -> str:
+    """4px left-border CSS, color-keyed to the chunk's domain."""
+    color = DOMAIN_COLORS.get(domain or "", "#CBD5E1")
+    return (
+        f"border-left:4px solid {color};padding-left:10px;margin-bottom:8px;"
+    )
 
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────
 def render_sidebar() -> dict:
+    from core.llm_router import (
+        get_active_backend,
+        set_active_backend,
+        status as llm_status,
+    )
+
     with st.sidebar:
+        # ── LLM backend selector ───────────────────────────────────────
+        st.markdown("### 🤖 LLM backend")
+        backend_status = llm_status()
+        active_backend = backend_status["active"]
+        # Each option label hints which models will be used.
+        backend_labels = {
+            "auto":  f"🪄 Auto · resolves to {backend_status['active'].title()}",
+            "cloud": "☁️ Cloud · OpenAI (gpt-4o / gpt-4o-mini)",
+            "local": "💻 Local · Ollama (qwen2.5:3b)",
+        }
+        # Disable cloud if the key is invalid.
+        available = ["auto", "local"]
+        if backend_status["openai_key_valid"]:
+            available.append("cloud")
+        else:
+            backend_labels["cloud"] += " · ⚠ key missing"
+        raw_backend = backend_status["raw"]
+        if raw_backend not in available:
+            raw_backend = "auto"
+        backend_pick = st.selectbox(
+            "LLM backend",
+            options=["auto", "local", "cloud"],
+            index=["auto", "local", "cloud"].index(raw_backend),
+            format_func=lambda b: backend_labels[b],
+            label_visibility="collapsed",
+            key="llm_backend_selector",
+        )
+        if backend_pick == "cloud" and not backend_status["openai_key_valid"]:
+            st.warning(
+                "OpenAI key not detected — set OPENAI_API_KEY in `.env`. "
+                "Staying on the previous backend."
+            )
+        elif backend_pick != raw_backend:
+            try:
+                set_active_backend(backend_pick)
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+        # Active-backend chip
+        backend_color = "#10B981" if active_backend == "local" else "#0EA5E9"
+        backend_emoji = "💻" if active_backend == "local" else "☁️"
+        st.markdown(
+            f"<div style='font-size:0.8rem;color:{backend_color};margin-bottom:8px;'>"
+            f"{backend_emoji} <b>{active_backend}</b> &middot; "
+            f"answer=<code>{backend_status['per_task']['answer']}</code></div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Domain selector ────────────────────────────────────────────
+        st.markdown("### 🗂️ Active domain")
+        domain_choice = st.selectbox(
+            "Active domain",
+            options=list(DOMAINS),
+            index=list(DOMAINS).index(st.session_state["active_domain"]),
+            format_func=lambda d: f"{DOMAIN_EMOJI.get(d,'')} {DOMAIN_LABELS.get(d,d.title())}",
+            label_visibility="collapsed",
+            key="domain_selector",
+        )
+        if domain_choice != st.session_state["active_domain"]:
+            st.session_state["active_domain"] = domain_choice
+            st.rerun()
+        st.markdown(
+            f"<div style='font-size:0.8rem;color:{DOMAIN_COLORS[domain_choice]};margin-bottom:8px;'>"
+            f"{DOMAIN_EMOJI[domain_choice]} {DOMAIN_LABELS[domain_choice]} corpus active "
+            f"&middot; collection <code>{pipe.embedding_pipeline._collection}</code></div>",
+            unsafe_allow_html=True,
+        )
+
         st.markdown("### ⚙️ Settings")
         opts = {
             "top_k": st.slider("Results to retrieve", 1, 10, 5),
@@ -182,20 +328,9 @@ def render_sidebar() -> dict:
 
         st.markdown("---")
         st.markdown("### 💡 Try these queries")
-        examples = [
-            "What is the OEE target for Q2 2026?",
-            "Pump P-203 has high vibration alarm ALM-P001. Cause and fix?",
-            "Why did CNC Line 4 shut down in February?",
-            "Compare Nippon Steel vs ArcelorMittal",
-            "Belt tracking deviation on conveyor CV-301",
-            "Hydraulic press HP-401 pressure loss — diagnose",
-            "What is the CAPA process for critical NCR?",
-            "maintanance schedul for spindle bearings",
-            "PLC fault code FC-003 on conveyor CV-302",
-            "scrap rate for welding Plant A vs Plant B",
-        ]
+        examples = EXAMPLE_QUERIES.get(ACTIVE_DOMAIN, [])
         for ex in examples:
-            if st.button(ex, key=f"ex_{ex}", use_container_width=True):
+            if st.button(ex, key=f"ex_{ACTIVE_DOMAIN}_{ex}", use_container_width=True):
                 st.session_state["query_input"] = ex
                 st.rerun()
 
@@ -264,6 +399,15 @@ def render_evidence(evidence: list, limit: int | None = None) -> None:
         source = Path(str(meta.get("source", meta.get("source_file", "unknown")))).name
         doc_type = str(meta.get("doc_type", "unknown")).upper()
         score = ev.get("vector_score", ev.get("rrf_score", 0.0))
+        # Domain inferred from the chunk's source path. Falls back to the
+        # active domain so legacy/unknown chunks still get a coloured rail.
+        src = str(meta.get("source", meta.get("source_file", ""))).lower()
+        if "/aviation/" in src or src.startswith("aviation/"):
+            chunk_domain = "aviation"
+        elif "/manufacturing/" in src or src.startswith("manufacturing/"):
+            chunk_domain = "manufacturing"
+        else:
+            chunk_domain = st.session_state.get("active_domain")
 
         location = []
         if "page" in meta: location.append(f"Page {meta['page']}")
@@ -275,8 +419,9 @@ def render_evidence(evidence: list, limit: int | None = None) -> None:
         with header_col:
             st.markdown(
                 f'**Result {i}** · '
-                f'<span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:.8rem">{doc_type}</span> '
-                f'`{source}`'
+                + domain_pill(chunk_domain) + ' '
+                + f'<span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:.8rem">{doc_type}</span> '
+                + f'`{source}`'
                 + (f' · {" · ".join(location)}' if location else ""),
                 unsafe_allow_html=True,
             )
@@ -289,13 +434,33 @@ def render_evidence(evidence: list, limit: int | None = None) -> None:
         if len(preview) > 800:
             last_dot = preview[:800].rfind(".")
             preview = preview[:last_dot + 1 if last_dot > 500 else 800] + " ..."
-        st.markdown(f'<div class="result-card">{preview}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="result-card" style="{domain_border_style(chunk_domain)}">{preview}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_graph_view(graph_context: dict | None) -> None:
     if not graph_context or not graph_context.get("nodes"):
-        st.info("No graph entities matched. Try including equipment IDs (P-203, CNC-A-004) "
-                "or alarm codes (ALM-P001).")
+        # Surface a couple of real KG identifiers from the active domain so
+        # the hint is always relevant, never hardcoded.
+        domain = st.session_state.get("active_domain") or DEFAULT_DOMAIN
+        kg = PIPES[domain].kg if PIPES.get(domain) is not None else None
+        samples: list[str] = []
+        if kg is not None:
+            for n, d in kg.graph.nodes(data=True):
+                if d.get("entity_type") == "Equipment" and len(samples) < 1:
+                    samples.append(str(n))
+                if d.get("entity_type") in ("Cause", "Component", "Alarm") and len(samples) < 3:
+                    samples.append(str(n))
+                if len(samples) >= 3:
+                    break
+        hint = (
+            f"Try including identifiers like {', '.join(samples)}."
+            if samples
+            else "Try including an entity id or one of the schema's vocab terms."
+        )
+        st.info(f"No graph entities matched. {hint}")
         return
 
     nodes, edges = graph_context["nodes"], graph_context.get("edges", [])
@@ -342,9 +507,13 @@ def render_graph_view(graph_context: dict | None) -> None:
 
 # ── Tabs ────────────────────────────────────────────────────────────────────
 def _ensure_chat_state() -> ChatState:
-    if "chat_state" not in st.session_state:
-        st.session_state.chat_state = ChatState()
-    return st.session_state.chat_state
+    """One ChatState per active domain — switching domains gives the user a
+    fresh transcript and stops cross-domain context bleed."""
+    domain = st.session_state.get("active_domain", DEFAULT_DOMAIN)
+    states = st.session_state.setdefault("chat_states", {})
+    if domain not in states:
+        states[domain] = ChatState()
+    return states[domain]
 
 
 def _render_answer_meta(meta: dict) -> None:
@@ -409,12 +578,20 @@ def _render_chat_turn(turn) -> None:
                 st.markdown(chips, unsafe_allow_html=True)
         return
 
+    # Each turn carries the domain it was asked under. Falls back to the
+    # currently-active domain for legacy turns saved before the split.
+    turn_domain = (turn.meta or {}).get("domain") or st.session_state.get("active_domain")
+
     if turn.role == "user":
         with st.chat_message("user"):
-            st.markdown(turn.content)
+            st.markdown(
+                f"{domain_pill(turn_domain)} &nbsp;{turn.content}",
+                unsafe_allow_html=True,
+            )
         return
 
     with st.chat_message("assistant"):
+        st.markdown(domain_pill(turn_domain), unsafe_allow_html=True)
         rejected = bool(turn.meta.get("rejected"))
         if rejected:
             st.markdown(f'<div class="hitl-banner rejected">{turn.content}</div>',
@@ -467,11 +644,17 @@ def tab_chat(opts: dict) -> None:
         )
 
     if not state.turns:
+        es = DOMAIN_EMPTY_STATE.get(ACTIVE_DOMAIN, {})
+        heading = es.get("heading", f"{DOMAIN_LABELS[ACTIVE_DOMAIN]} Copilot")
+        blurb = es.get("blurb", "")
+        hint = EMPTY_STATE_HINTS[ACTIVE_DOMAIN]
         st.markdown(
-            '<div class="chat-empty">👋 Try something like<br>'
-            "<i>“why did CNC Line 4 shut down in February?”</i> · "
-            "<i>“maintanance schedul for spindle bearings”</i> · "
-            "<i>“OEE target for Q2 2026?”</i></div>",
+            '<div class="chat-empty">'
+            f'<div style="font-size:2rem">{EMPTY_STATE_EMOJI[ACTIVE_DOMAIN]}</div>'
+            f'<div style="font-weight:600;font-size:1.1rem;margin-top:4px">{heading}</div>'
+            + (f'<div style="color:#475569;font-size:.9rem;margin-top:6px">{blurb}</div>' if blurb else "")
+            + (f'<div style="margin-top:10px">Try something like<br>{hint}</div>' if hint else "")
+            + '</div>',
             unsafe_allow_html=True,
         )
 
@@ -490,12 +673,20 @@ def tab_chat(opts: dict) -> None:
     if state.awaiting_slot is not None:
         placeholder = f"Answer: {state.awaiting_slot.prompt}  (or type 'skip')"
     else:
-        placeholder = "Ask anything about manufacturing operations…"
+        placeholder = EXAMPLE_PLACEHOLDER.get(
+            ACTIVE_DOMAIN, "Ask a question…"
+        )
 
     message = st.chat_input(placeholder)
     if message:
-        with st.spinner("Thinking…"):
+        prior_turn_count = len(state.turns)
+        with st.spinner(f"Thinking… [{DOMAIN_LABELS[ACTIVE_DOMAIN]}]"):
             chat_agent.handle(state, message)
+        # Stamp the active domain on every turn this exchange produced so
+        # the renderer can show the correct domain pill, even if the user
+        # switches domains for the next message.
+        for t in state.turns[prior_turn_count:]:
+            t.meta.setdefault("domain", ACTIVE_DOMAIN)
         st.rerun()
 
 
@@ -503,10 +694,19 @@ def tab_quick_search(opts: dict) -> None:
     st.markdown("### 🔍 Quick Search — Clarifier + FAISS Retrieval")
     st.caption("Fast semantic search. Does not call any LLM.")
 
+    # Both label and placeholder draw from the schema's UX block — adding a
+    # new domain doesn't require any branching here.
+    label = f"Ask a {DOMAIN_LABELS[ACTIVE_DOMAIN]} question:"
+    examples_for_domain = EXAMPLE_QUERIES.get(ACTIVE_DOMAIN) or []
+    placeholder = (
+        f"e.g. {examples_for_domain[0]}"
+        if examples_for_domain
+        else EXAMPLE_PLACEHOLDER.get(ACTIVE_DOMAIN, "Ask a question…")
+    )
     query = st.text_input(
-        "Ask a question about manufacturing operations:",
+        label,
         value=st.session_state.get("query_input", ""),
-        placeholder="e.g. What is the OEE for Plant A in Q1 2026?",
+        placeholder=placeholder,
     )
     if not query:
         return
@@ -543,42 +743,180 @@ def tab_diagnostic(opts: dict) -> None:
                     "Use Quick Search for non-LLM exploration.")
         return
 
-    st.caption(f"Hybrid retrieval (BM25 + FAISS + Graph + RRF) → LLM ({LLM_MODEL}) → Critic loop.")
+    st.caption(
+        f"Hybrid retrieval (BM25 + Qdrant + Graph + RRF) → bge-reranker "
+        f"→ LLM ({LLM_MODEL}) → Critic loop."
+    )
 
+    diag_label = f"Enter a {DOMAIN_LABELS[ACTIVE_DOMAIN]} diagnostic query:"
+    examples_for_domain = EXAMPLE_QUERIES.get(ACTIVE_DOMAIN) or []
+    diag_placeholder = (
+        f"e.g. {examples_for_domain[0]}"
+        if examples_for_domain
+        else EXAMPLE_PLACEHOLDER.get(ACTIVE_DOMAIN, "Ask a question…")
+    )
     query = st.text_area(
-        "Enter a manufacturing query:",
+        diag_label,
         value=st.session_state.get("query_input", ""),
         height=80,
-        placeholder="e.g. Pump P-203 has high vibration alarm ALM-P001. What is the cause and fix?",
+        placeholder=diag_placeholder,
     )
+
+    can_stream = (
+        getattr(pipe, "_orchestrator_engine", "") == "langgraph"
+        and hasattr(pipe, "diagnostic_stream")
+    )
+    stream_mode = st.toggle(
+        "Stream pipeline stages (LangGraph)",
+        value=can_stream,
+        disabled=not can_stream,
+        help="Render each pipeline stage (retrieval, cause-ranking, "
+             "procedure, critic) as soon as it finishes instead of "
+             "waiting for the whole graph. Requires USE_LANGGRAPH=true.",
+    )
+
     if st.button("🚀 Run Diagnostic", type="primary"):
         if not query.strip():
             return
-        with st.spinner("Running clarifier → hybrid retrieval → LLM → critic..."):
-            result = pipe.diagnostic(query)
+        if stream_mode and can_stream:
+            _run_diagnostic_streaming(query, opts)
+        else:
+            _run_diagnostic_blocking(query, opts)
 
-        metrics = result.metrics
-        critic = (result.critic or {}).get("final_verdict", {}) or {}
-        verdict = critic.get("verdict", "N/A")
 
-        cols = st.columns(4)
-        cols[0].metric("Latency", format_latency(metrics.get("total_latency_ms", 0)))
-        cols[1].metric("Tokens", f"{metrics.get('total_tokens', 0):,}")
-        cols[2].metric("Cost", format_cost(metrics.get("cost_estimate_usd", 0)))
-        badge = {"PASS":"pass-badge", "FAIL":"fail-badge"}.get(verdict, "skip-badge")
-        cols[3].markdown(f'Critic: <span class="{badge}">{verdict}</span>',
-                          unsafe_allow_html=True)
+def _run_diagnostic_blocking(query: str, opts: dict) -> None:
+    with st.spinner("Running clarifier → hybrid retrieval → LLM → critic..."):
+        result = pipe.diagnostic(query)
+    _render_diagnostic_result(result, opts)
 
-        render_clarifier_analysis(result.clarification, result.correction, opts)
 
-        st.markdown("### Answer")
-        st.markdown(result.answer or "_No answer returned._")
+def _run_diagnostic_streaming(query: str, opts: dict) -> None:
+    """Stream pipeline stages incrementally (piston-style)."""
+    stage_labels = {
+        "clarify": "Clarifier…",
+        "correct": "Query correction…",
+        "format": "Query understanding…",
+        "detect_purchase": "Purchase-request detection…",
+        "retrieve": "Hybrid retrieval (BM25 + Qdrant + Graph)…",
+        "tools_read": "Tool calls (ERP / MES)…",
+        "rank_causes": "Cause ranking…",
+        "draft_procedure": "Drafting procedure…",
+        "generate": "Generating answer…",
+        "criticality_check": "Risk scoring…",
+        "human_approval": "Awaiting human approval…",
+        "critic": "Critic review…",
+        "retry": "Retrying with critic feedback…",
+    }
 
-        with st.expander(f"📎 Evidence ({len(result.evidence)} chunks)"):
-            render_evidence(result.evidence)
+    evidence_ph = st.empty()
+    causes_ph = st.empty()
+    procedure_ph = st.empty()
+    answer_ph = st.empty()
+    critic_ph = st.empty()
+    metrics_ph = st.empty()
 
-        with st.expander("🔗 Graph Context"):
-            render_graph_view(result.graph_context)
+    final_response: dict | None = None
+    with st.status("Running pipeline…", expanded=False) as status:
+        for event in pipe.diagnostic_stream(query):
+            kind = event.get("event")
+            if kind == "node_update":
+                node = event.get("node", "")
+                status.update(label=stage_labels.get(node, f"{node}…"))
+                update = event.get("update") or {}
+                if "evidence" in update:
+                    with evidence_ph.container():
+                        with st.expander(
+                            f"📎 Retrieved Evidence — {len(update['evidence'])} chunks",
+                            expanded=True,
+                        ):
+                            render_evidence(update["evidence"])
+                if "cause_ranking" in update:
+                    cands = (update.get("cause_ranking") or {}).get("candidates", [])
+                    with causes_ph.container():
+                        with st.expander(f"🎯 Ranked Causes — {len(cands)}", expanded=True):
+                            for i, c in enumerate(cands, 1):
+                                st.markdown(
+                                    f"**{i}. {c.get('cause', '')}**  · score `{c.get('score', 0):.2f}`"
+                                )
+                                if c.get("rationale"):
+                                    st.write(c["rationale"])
+                if "procedure" in update:
+                    steps = ((update.get("procedure") or {}).get("procedure") or {}).get("steps") or []
+                    with procedure_ph.container():
+                        with st.expander(
+                            f"🛠️ Diagnostic Procedure — {len(steps)} steps", expanded=True,
+                        ):
+                            for s in steps:
+                                cites = " ".join(f"`[{c}]`" for c in (s.get("citations") or []))
+                                st.markdown(f"**Step {s.get('step', '?')}.** {s.get('action', '')} {cites}")
+                if "answer" in update and update["answer"]:
+                    with answer_ph.container():
+                        st.markdown("### Answer")
+                        st.markdown(update["answer"])
+                if "attempts" in update:
+                    attempts = update["attempts"]
+                    last = attempts[-1] if attempts else {}
+                    verdict = last.get("verdict", "N/A")
+                    badge = {"PASS": "pass-badge", "FAIL": "fail-badge"}.get(verdict, "skip-badge")
+                    with critic_ph.container():
+                        st.markdown(
+                            f'Critic: <span class="{badge}">{verdict}</span> '
+                            f"(attempt {len(attempts)})",
+                            unsafe_allow_html=True,
+                        )
+            elif kind in ("complete", "interrupted"):
+                final_response = event.get("response") or {}
+                status.update(
+                    label="Awaiting approval" if kind == "interrupted" else "Pipeline complete",
+                    state=("running" if kind == "interrupted" else "complete"),
+                )
+            elif kind == "error":
+                st.error(event.get("message", "unknown error"))
+
+    if final_response:
+        metrics = final_response.get("metrics", {}) or {}
+        with metrics_ph.container():
+            cols = st.columns(4)
+            cols[0].metric("Latency", format_latency(metrics.get("total_latency_ms", 0)))
+            cols[1].metric("Tokens", f"{metrics.get('total_tokens', 0):,}")
+            cols[2].metric("Cost", format_cost(metrics.get("cost_estimate_usd", 0)))
+            cols[3].metric("Risk", f"{(final_response.get('risk') or {}).get('score', 0):.2f}")
+
+
+def _render_diagnostic_result(result, opts: dict) -> None:
+    metrics = result.metrics
+    critic = (result.critic or {}).get("final_verdict", {}) or {}
+    verdict = critic.get("verdict", "N/A")
+
+    cols = st.columns(4)
+    cols[0].metric("Latency", format_latency(metrics.get("total_latency_ms", 0)))
+    cols[1].metric("Tokens", f"{metrics.get('total_tokens', 0):,}")
+    cols[2].metric("Cost", format_cost(metrics.get("cost_estimate_usd", 0)))
+    badge = {"PASS":"pass-badge", "FAIL":"fail-badge"}.get(verdict, "skip-badge")
+    cols[3].markdown(f'Critic: <span class="{badge}">{verdict}</span>',
+                      unsafe_allow_html=True)
+
+    render_clarifier_analysis(result.clarification, result.correction, opts)
+
+    # If a structured procedure was emitted, surface it as its own section
+    # for easier scanning. The free-form answer is the markdown render so
+    # this is purely additive.
+    procedure = (result.procedure or {}).get("procedure") if result.procedure else None
+    steps = (procedure or {}).get("steps") or []
+    if steps:
+        with st.expander(f"🛠️ Diagnostic Procedure — {len(steps)} steps", expanded=True):
+            for s in steps:
+                cites = " ".join(f"`[{c}]`" for c in (s.get("citations") or []))
+                st.markdown(f"**Step {s.get('step', '?')}.** {s.get('action', '')} {cites}")
+
+    st.markdown("### Answer")
+    st.markdown(result.answer or "_No answer returned._")
+
+    with st.expander(f"📎 Evidence ({len(result.evidence)} chunks)"):
+        render_evidence(result.evidence)
+
+    with st.expander("🔗 Graph Context"):
+        render_graph_view(result.graph_context)
 
 
 def tab_comparison() -> None:
@@ -660,8 +998,21 @@ def tab_knowledge_graph() -> None:
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
 
-    explore = st.text_input("Explore an entity (equipment ID, alarm code, etc.):",
-                              placeholder="e.g. P-203, ALM-P001, CNC-A-004")
+    # Pick a couple of real Equipment ids + one Cause/Component vocab term
+    # from the active KG so the placeholder is domain-relevant without any
+    # hardcoded strings.
+    eg = []
+    for n, d in kg.graph.nodes(data=True):
+        if d.get("entity_type") == "Equipment":
+            eg.append(str(n)); break
+    for n, d in kg.graph.nodes(data=True):
+        if d.get("entity_type") in ("Cause", "Component"):
+            eg.append(str(n)); break
+    explore_placeholder = f"e.g. {', '.join(eg)}" if eg else "type an entity id or vocab term"
+    explore = st.text_input(
+        "Explore an entity (equipment ID, alarm code, etc.):",
+        placeholder=explore_placeholder,
+    )
     if explore:
         render_graph_view(kg.get_subgraph_for_query(explore))
 
@@ -967,6 +1318,329 @@ def _record_audit_from_streamlit(
         pass
 
 
+def tab_onboard_domain() -> None:
+    """Schema-authoring agent — takes a few sample docs + a domain id and
+    drives a bigger LLM to author ``schemas/<domain>.yaml`` end-to-end.
+    Iterative: the agent may ask follow-up questions; the user answers
+    inline and the agent re-emits.
+    """
+    import subprocess as _sub
+
+    st.markdown("### 🌱 Onboard a new domain")
+    st.caption(
+        "Paste 1–5 sample documents and a domain id. An LLM agent extracts "
+        "entity vocabularies, ID regex patterns, and UI copy, then writes "
+        "the schema YAML. After saving, one click rebuilds the Qdrant "
+        "index + KG and the domain lights up in every UI surface."
+    )
+
+    from config import ONBOARDING_MODEL, llm_available
+
+    if not llm_available():
+        st.error(
+            "The onboarding agent needs an LLM backend. Set `OPENAI_API_KEY` "
+            "(any OpenAI-compatible host) or point `ANSWER_MODEL` at a local "
+            "Ollama model that's reachable."
+        )
+        return
+    st.caption(f"Model: `{ONBOARDING_MODEL}` (override via `ONBOARDING_MODEL` env)")
+
+    # Session state for the wizard
+    state = st.session_state.setdefault(
+        "onboard_state",
+        {
+            "domain_id": "",
+            "domain_hint": "",
+            "docs": [],            # list[str] of pasted/uploaded text
+            "doc_names": [],
+            "prior_qa": [],        # list[{question, answer}]
+            "agent_response": None,  # last OnboardingResponse dict
+            "current_answers": {},   # {question_idx: answer}
+            "saved_to": None,
+            "rebuild_output": "",
+        },
+    )
+
+    inputs_col, output_col = st.columns([5, 7])
+
+    # ── Inputs column ──────────────────────────────────────────────────
+    with inputs_col:
+        st.markdown("#### 1. Identify the domain")
+        state["domain_id"] = st.text_input(
+            "Domain id (lowercase a-z/0-9/_)",
+            value=state["domain_id"],
+            placeholder="e.g. medical, claims, semiconductor",
+        )
+        state["domain_hint"] = st.text_input(
+            "Short label / hint (optional)",
+            value=state["domain_hint"],
+            placeholder="e.g. medical imaging service notes",
+        )
+
+        st.markdown("#### 2. Provide sample documents")
+        uploads = st.file_uploader(
+            "Upload .txt / .md / .pdf / .xlsx (up to 5 files)",
+            accept_multiple_files=True,
+            type=["txt", "md", "pdf", "xlsx"],
+            key="onboard_uploads",
+        )
+        if uploads:
+            from doc_pipeline.document_ingestion import DocumentIngestion
+            ing = DocumentIngestion()
+            docs: List[str] = []
+            names: List[str] = []
+            for uf in uploads[:5]:
+                names.append(uf.name)
+                suffix = "." + uf.name.rsplit(".", 1)[-1].lower()
+                if suffix in (".txt", ".md"):
+                    docs.append(uf.read().decode("utf-8", errors="ignore"))
+                else:
+                    # PDF / XLSX — drop to disk and use existing parsers.
+                    with tempfile.NamedTemporaryFile(
+                        suffix=suffix, delete=False
+                    ) as tf:
+                        tf.write(uf.read())
+                        tmp_path = tf.name
+                    try:
+                        parsed = ing.ingest_file(tmp_path)
+                        docs.append("\n\n".join(p.content for p in parsed))
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
+            state["docs"] = docs
+            state["doc_names"] = names
+
+        pasted = st.text_area(
+            "Or paste raw text (treated as one extra document)",
+            height=150,
+            placeholder="Paste a representative sample of your domain text…",
+            key="onboard_paste",
+        )
+        if pasted.strip():
+            existing = list(state["docs"])
+            existing.append(pasted)
+            state["docs"] = existing
+            state["doc_names"].append("(pasted)")
+
+        if state["docs"]:
+            st.caption(
+                f"Loaded {len(state['docs'])} doc(s), "
+                f"{sum(len(d) for d in state['docs']):,} chars total"
+            )
+
+        st.markdown("#### 3. Analyse")
+        if st.button(
+            "🤖 Analyse & propose schema",
+            use_container_width=True,
+            disabled=not (state["domain_id"] and state["docs"]),
+        ):
+            try:
+                from core.onboarding_agent import analyze
+                with st.spinner(f"Authoring schema with {ONBOARDING_MODEL}…"):
+                    resp = analyze(
+                        state["domain_id"],
+                        state["docs"],
+                        domain_hint=state["domain_hint"],
+                        prior_qa=state["prior_qa"],
+                    )
+                state["agent_response"] = resp.to_dict()
+                state["current_answers"] = {}
+            except Exception as e:
+                st.error(f"Onboarding failed: {e}")
+
+        if st.button("🔄 Reset wizard", use_container_width=True):
+            for k in list(state.keys()):
+                if k != "domain_id":
+                    state[k] = [] if isinstance(state[k], list) else (
+                        {} if isinstance(state[k], dict) else (
+                            None if state[k] is None else ""
+                        )
+                    )
+            st.rerun()
+
+    # ── Output column ──────────────────────────────────────────────────
+    with output_col:
+        resp = state["agent_response"]
+        if not resp:
+            st.info(
+                "No analysis yet. Provide a domain id + sample docs on the "
+                "left, then click **Analyse & propose schema**."
+            )
+            return
+
+        # Analysis
+        if resp.get("analysis"):
+            st.markdown("#### Agent analysis")
+            st.markdown(f"> {resp['analysis']}")
+
+        # Discovered entities
+        discovered = resp.get("discovered_entities") or {}
+        if discovered:
+            st.markdown("#### Discovered entities")
+            for et, vals in discovered.items():
+                st.markdown(
+                    f"- **{et}** ({len(vals)}): "
+                    + ", ".join(f"`{v}`" for v in vals[:12])
+                    + ("…" if len(vals) > 12 else "")
+                )
+
+        # Follow-up questions
+        follow_ups = resp.get("follow_up_questions") or []
+        if follow_ups and not resp.get("ready_to_generate"):
+            st.markdown("#### Follow-up questions")
+            st.caption(
+                "Answer what you can, then **Submit answers & re-run** — or hit "
+                "**Skip & generate now** to take a best-effort schema from "
+                "current evidence and iterate later."
+            )
+            for i, q in enumerate(follow_ups):
+                state["current_answers"][i] = st.text_area(
+                    f"Q{i+1}. {q}",
+                    value=state["current_answers"].get(i, ""),
+                    key=f"onboard_answer_{i}",
+                    height=70,
+                )
+            submit_col, skip_col = st.columns(2)
+            with submit_col:
+                if st.button("➡️ Submit answers & re-run", use_container_width=True):
+                    pairs = [
+                        {"question": q, "answer": state["current_answers"].get(i, "").strip()}
+                        for i, q in enumerate(follow_ups)
+                    ]
+                    state["prior_qa"].extend([p for p in pairs if p["answer"]])
+                    try:
+                        from core.onboarding_agent import analyze
+                        with st.spinner(f"Re-running with your answers…"):
+                            resp2 = analyze(
+                                state["domain_id"],
+                                state["docs"],
+                                domain_hint=state["domain_hint"],
+                                prior_qa=state["prior_qa"],
+                            )
+                        state["agent_response"] = resp2.to_dict()
+                        state["current_answers"] = {}
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Re-run failed: {e}")
+            with skip_col:
+                if st.button("⏩ Skip & generate now", use_container_width=True,
+                             help="Force the agent to emit a YAML even if it still has questions."):
+                    try:
+                        from core.onboarding_agent import analyze
+                        with st.spinner("Force-generating best-effort schema…"):
+                            resp2 = analyze(
+                                state["domain_id"],
+                                state["docs"],
+                                domain_hint=state["domain_hint"],
+                                prior_qa=state["prior_qa"],
+                                force_generate=True,
+                            )
+                        state["agent_response"] = resp2.to_dict()
+                        state["current_answers"] = {}
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Force-generate failed: {e}")
+
+        # YAML preview + validation report
+        if resp.get("yaml"):
+            preview_col, dl_col = st.columns([8, 2])
+            with preview_col:
+                st.markdown("#### Proposed schema YAML")
+            with dl_col:
+                # Always available — even if validation fails the user can
+                # grab the YAML, hand-edit it, and re-run the pipeline.
+                st.download_button(
+                    label="⬇️ Download",
+                    data=resp["yaml"],
+                    file_name=f"{state['domain_id'] or 'new_domain'}.yaml",
+                    mime="text/yaml",
+                    use_container_width=True,
+                    key="onboard_dl",
+                )
+            st.code(resp["yaml"], language="yaml")
+
+            val = resp.get("validation") or {}
+            if val:
+                ok = val.get("all_passed")
+                if ok:
+                    st.success("✅ All validation gates passed.")
+                else:
+                    st.warning("⚠️ Validation found issues — fix before saving.")
+                with st.expander("Validation report"):
+                    st.json(val)
+            sc = resp.get("self_check") or {}
+            if sc:
+                with st.expander("Agent self-check"):
+                    st.json(sc)
+
+            # ── Save + rebuild buttons ──
+            save_col, rebuild_col = st.columns(2)
+            with save_col:
+                if st.button(
+                    "💾 Save schema",
+                    use_container_width=True,
+                    disabled=not (val.get("all_passed") if val else False),
+                ):
+                    try:
+                        from core.onboarding_agent import save_schema
+                        dest = save_schema(state["domain_id"], resp["yaml"])
+                        state["saved_to"] = str(dest)
+                        st.success(f"Wrote {dest}")
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
+            with rebuild_col:
+                if st.button(
+                    "🏗️ Save & build KG",
+                    use_container_width=True,
+                    disabled=not (val.get("all_passed") if val else False),
+                    help="Saves the schema then runs scripts/onboard_domain.sh --rebuild-only",
+                ):
+                    try:
+                        from core.onboarding_agent import save_schema
+                        dest = save_schema(state["domain_id"], resp["yaml"])
+                        state["saved_to"] = str(dest)
+                        # Domain input dir must exist before the script runs.
+                        from config import input_dir
+                        Path(input_dir(state["domain_id"])).mkdir(
+                            parents=True, exist_ok=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
+                    else:
+                        with st.spinner("Building Qdrant index + KG…"):
+                            try:
+                                out = _sub.run(
+                                    [
+                                        "bash",
+                                        "scripts/onboard_domain.sh",
+                                        "--domain", state["domain_id"],
+                                        "--rebuild-only",
+                                    ],
+                                    capture_output=True, text=True, timeout=900,
+                                )
+                                state["rebuild_output"] = (
+                                    (out.stdout or "") + "\n" + (out.stderr or "")
+                                )[-4000:]
+                                if out.returncode != 0:
+                                    st.error(
+                                        f"Build script exited {out.returncode}. "
+                                        f"See output below."
+                                    )
+                                else:
+                                    st.success(
+                                        "✅ Domain built. Restart `./run.sh` "
+                                        "so the running UIs auto-discover it."
+                                    )
+                            except _sub.TimeoutExpired:
+                                state["rebuild_output"] = "(build timed out after 15 min)"
+                                st.error("Build timed out.")
+
+            if state.get("saved_to"):
+                st.caption(f"Last saved → `{state['saved_to']}`")
+            if state.get("rebuild_output"):
+                with st.expander("Build output"):
+                    st.code(state["rebuild_output"])
+
+
 def tab_architecture() -> None:
     st.markdown("### 🔄 Unified Pipeline Flow")
     st.markdown("""
@@ -1059,6 +1733,7 @@ def main() -> None:
         "⚖️ Comparison",
         "🔗 Knowledge Graph",
         "📋 Approvals",
+        "🌱 Onboard Domain",
         "🔄 Architecture & Cost",
     ]
     tabs = st.tabs(tab_titles)
@@ -1076,6 +1751,8 @@ def main() -> None:
     with tabs[5]:
         tab_approvals()
     with tabs[6]:
+        tab_onboard_domain()
+    with tabs[7]:
         tab_architecture()
 
 

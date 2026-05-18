@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1119624
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a pilot in a king air was distracted during a maintenance flight with a mechanic, and neglected to activate the auto ignition switches. when he noticed, he reached for the switches but unintentionally activated the starter generators, removing generator power from the electrical system. after a successful return to the departure airport, he discovered that his radio was unable to contact ground control, likely due to the exhaustion of the battery power.
+
+## Resolution
+Good thinking to get back on the ground ASAP. This pilot will likely not be distracted again by non-essential activities.

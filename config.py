@@ -1,23 +1,27 @@
 """
 Unified configuration for the Manufacturing Hybrid GraphRAG pipeline.
 
-This is the single source of truth for paths, models, and thresholds shared
-across the doc_pipeline ingestion layer, the core retrieval/KG layer, and the
-top-level Streamlit application.
+Backed by ``pydantic-settings``: env vars are validated, defaults are typed,
+and the canonical instance lives at ``config.settings``.
+
+Module-level constants (``EMBEDDING_MODEL``, ``USE_RERANKER``, …) are
+re-exported from that instance for back-compat with existing
+``from config import X`` call-sites across ``core/``, ``pipeline/``,
+``doc_pipeline/``, ``comparison/`` and the Streamlit / FastAPI front-ends.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from dotenv import load_dotenv
+from typing import Tuple
 
-load_dotenv()
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# ── Paths ───────────────────────────────────────────────────────────────────
+# ── Paths (filesystem layout — not env-driven) ──────────────────────────────
 BASE_DIR: Path = Path(__file__).resolve().parent
 
-# Canonical ingestion directory. The doc_pipeline ships seven realistic sample
+# Canonical ingestion directory. The doc_pipeline ships realistic sample
 # documents here; the application falls back to data/ if these are removed.
 INPUT_DOCS_DIR: Path = BASE_DIR / "doc_pipeline" / "input_docs"
 
@@ -27,7 +31,7 @@ PDF_DIR: Path = DATA_DIR / "pdfs"
 EXCEL_DIR: Path = DATA_DIR / "excel"
 PROCESSED_DIR: Path = DATA_DIR / "processed"
 
-# Vector store (FAISS) and KG live alongside the doc_pipeline so we reuse the
+# Vector store and KG live alongside the doc_pipeline so we reuse the
 # same artefacts whether the user launches the CLI, the Streamlit app, or the
 # Hybrid GraphRAG orchestrator.
 VECTOR_STORE_DIR: Path = BASE_DIR / "doc_pipeline" / "vector_store"
@@ -36,160 +40,369 @@ OUTPUT_DIR: Path = BASE_DIR / "doc_pipeline" / "output"
 INDEX_NAME: str = "manufacturing_index"
 GRAPH_PATH: Path = PROCESSED_DIR / "knowledge_graph.json"
 
-# ── Models / credentials ────────────────────────────────────────────────────
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+# ── Domains (auto-discovered from schemas/*.yaml) ───────────────────────────
+# The system runs N independent domains side-by-side. Each domain owns:
+#   - schemas/<domain>.yaml      (ontology)
+#   - doc_pipeline/input_docs/<domain>/      (raw documents)
+#   - Qdrant collection ``<domain>_corpus``  (vector store)
+#   - data/processed/knowledge_graph.<domain>.json   (KG snapshot)
+#
+# Adding a new domain is therefore a *zero-Python-edit* operation: drop a
+# schema YAML into ``schemas/`` and the discovery below picks it up. This
+# function is intentionally lazy + cached so the import has no I/O when the
+# file list is unchanged.
 
-# ── Tiered model routing (Ollama + OpenAI) ──────────────────────────────────
-# Strong cloud models for user-facing answers; local Qwen for auxiliary tasks.
-OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-ANSWER_MODEL: str = os.getenv("ANSWER_MODEL", "gpt-4o")
-CRITIC_MODEL: str = os.getenv("CRITIC_MODEL", "qwen2.5:3b")
-RETRY_MODEL: str = os.getenv("RETRY_MODEL", "gpt-4o")
-CLASSIFY_MODEL: str = os.getenv("CLASSIFY_MODEL", "qwen2.5:3b")
-DIRECT_LLM_MODEL: str = os.getenv("DIRECT_LLM_MODEL", "gpt-4o-mini")
-CLASSICAL_RAG_MODEL: str = os.getenv("CLASSICAL_RAG_MODEL", "gpt-4o-mini")
+SCHEMAS_DIR: Path = BASE_DIR / "schemas"
 
-# Optional dedicated cause-ranking LLM (free local default via Ollama).
-# Used only when USE_CAUSE_RANKING=true *and* the query is a troubleshooting /
-# failure-analysis intent. See core/cause_ranker.py for details.
-CAUSE_RANK_MODEL: str = os.getenv("CAUSE_RANK_MODEL", "qwen2.5:3b")
-CAUSE_RANK_TOP_K: int = int(os.getenv("CAUSE_RANK_TOP_K", "5"))
 
-# ── Retrieval ───────────────────────────────────────────────────────────────
-TOP_K_RETRIEVAL: int = int(os.getenv("TOP_K_RETRIEVAL", "10"))
-TOP_K_RERANK: int = int(os.getenv("TOP_K_RERANK", "5"))
-RRF_K: int = 60
-MAX_CRITIC_RETRIES: int = int(os.getenv("MAX_CRITIC_RETRIES", "2"))
-DEFAULT_TOP_K: int = 5
-DEFAULT_CONTEXT_WINDOW: int = 1
+def _discover_domains() -> Dict[str, Dict[str, Any]]:
+    """Scan ``schemas/*.yaml`` and return a registry keyed by domain id.
 
-# ── Cross-encoder reranker (optional, second-stage rerank after RRF) ────────
-# Lift retrieval quality 5-15% on noisy industrial corpora by jointly scoring
-# (query, chunk) pairs with a cross-encoder. Requires `sentence-transformers`.
-# RERANK_CANDIDATE_POOL is the number of fused candidates we forward to the
-# reranker; TOP_K_RERANK still caps the final pack delivered to the LLM.
-USE_RERANKER: bool = os.getenv("USE_RERANKER", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
-RERANK_CANDIDATE_POOL: int = int(os.getenv("RERANK_CANDIDATE_POOL", "20"))
-RERANK_BLEND_WEIGHT: float = float(os.getenv("RERANK_BLEND_WEIGHT", "0.7"))
+    Each entry contains the schema path, the display block, and the UX
+    copy block (examples + empty_state + placeholder) — everything the
+    UI layers need to render the domain without any Python edits.
+    """
+    import yaml as _yaml  # local import; PyYAML is optional in some envs
 
-# ── Async parallel retrieval ────────────────────────────────────────────────
-# Fan BM25 + FAISS + Graph retrievers out across a thread pool. Cuts latency
-# on the diagnostic path by ~30% without changing the response shape.
-USE_PARALLEL_RETRIEVAL: bool = os.getenv("USE_PARALLEL_RETRIEVAL", "true").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-PARALLEL_RETRIEVAL_TIMEOUT_S: float = float(os.getenv("PARALLEL_RETRIEVAL_TIMEOUT_S", "15.0"))
+    registry: Dict[str, Dict[str, Any]] = {}
+    if not SCHEMAS_DIR.exists():
+        return registry
 
-# ── Semantic cache ──────────────────────────────────────────────────────────
-# In-memory (query embedding → answer) cache. Hits skip the entire LLM stack.
-USE_SEMANTIC_CACHE: bool = os.getenv("USE_SEMANTIC_CACHE", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-SEMANTIC_CACHE_THRESHOLD: float = float(os.getenv("SEMANTIC_CACHE_THRESHOLD", "0.97"))
-SEMANTIC_CACHE_MAX_SIZE: int = int(os.getenv("SEMANTIC_CACHE_MAX_SIZE", "256"))
-SEMANTIC_CACHE_TTL_SECONDS: int = int(os.getenv("SEMANTIC_CACHE_TTL_SECONDS", "3600"))
+    for path in sorted(SCHEMAS_DIR.glob("*.yaml")):
+        try:
+            raw = _yaml.safe_load(path.read_text()) or {}
+        except Exception:  # pragma: no cover - malformed YAML
+            continue
+        if not isinstance(raw, dict):
+            continue
+        domain_id = str(raw.get("domain") or path.stem).strip().lower()
+        if not domain_id:
+            continue
+        display = dict(raw.get("display") or {})
+        registry[domain_id] = {
+            "schema_path": path,
+            "display": {
+                "label": display.get("label", domain_id.replace("_", " ").title()),
+                "emoji": display.get("emoji", "📁"),
+                "color": display.get("color", "#64748B"),  # slate-500 fallback
+            },
+            "examples": [str(x) for x in (raw.get("examples") or []) if x],
+            "empty_state": {
+                str(k): str(v).strip()
+                for k, v in (raw.get("empty_state") or {}).items()
+            },
+            "placeholder": str(raw.get("placeholder") or "").strip(),
+        }
+    return registry
 
-# ── Guardrails post-processor ───────────────────────────────────────────────
-# Deterministic citation + safety-regex checks layered before the LLM critic.
-# `BLOCK` on unsafe patterns short-circuits the answer; `REWRITE` violations
-# are fed back into the critic/retry loop as additional issues.
-USE_GUARDRAILS: bool = os.getenv("USE_GUARDRAILS", "true").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-GUARDRAILS_REQUIRE_CITATIONS: bool = os.getenv(
-    "GUARDRAILS_REQUIRE_CITATIONS", "true"
-).strip().lower() in ("1", "true", "yes", "on")
-GUARDRAILS_MIN_CITATIONS: int = int(os.getenv("GUARDRAILS_MIN_CITATIONS", "1"))
-GUARDRAILS_BLOCK_UNSAFE: bool = os.getenv(
-    "GUARDRAILS_BLOCK_UNSAFE", "true"
-).strip().lower() in ("1", "true", "yes", "on")
 
-# ── Tool-calling agent (ERP / MES / SAP) ────────────────────────────────────
-# When enabled, a planner inspects each query and may invoke read-only tools
-# inline (inventory lookups, work-order status) or queue write-tools
-# (create PO / WO) through the existing HITL approval gate.
-USE_TOOLS: bool = os.getenv("USE_TOOLS", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-TOOL_PLANNER_MODEL: str = os.getenv("TOOL_PLANNER_MODEL", "qwen2.5:3b")
-TOOL_PLANNER_USE_LLM: bool = os.getenv(
-    "TOOL_PLANNER_USE_LLM", "true"
-).strip().lower() in ("1", "true", "yes", "on")
+_DOMAIN_REGISTRY: Dict[str, Dict[str, Any]] = _discover_domains()
 
-# ── Orchestration ──────────────────────────────────────────────────────────
-# Switch between the legacy procedural Orchestrator (core/orchestrator.py) and
-# the LangGraph StateGraph-based orchestrator (pipeline/langgraph_orchestrator.py).
-# Both run the same retrieval → answer → critic → retry flow but the LangGraph
-# version makes the state transitions explicit and integrates with the
-# wider LangChain ecosystem (tracing, checkpointing, etc.).
-USE_LANGGRAPH: bool = os.getenv("USE_LANGGRAPH", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
 
-# Insert a dedicated cause-ranking LLM stage between retrieval and answer
-# generation. Active only for troubleshooting / failure-analysis intents — the
-# stage short-circuits to an empty result for unrelated queries.
-USE_CAUSE_RANKING: bool = os.getenv("USE_CAUSE_RANKING", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
+def _ordered_domains(reg: Dict[str, Dict[str, Any]]) -> Tuple[str, ...]:
+    """Stable ordering: ``manufacturing`` first if present, then alphabetical."""
+    keys = sorted(reg)
+    if "manufacturing" in keys:
+        keys.remove("manufacturing")
+        return ("manufacturing", *keys)
+    return tuple(keys)
 
-# ── Human-in-the-Loop (HITL) approval gate ──────────────────────────────────
-# When enabled, a `criticality_check` node decides per-query whether the
-# proposed answer (or proposed action, e.g. a purchase request) needs a human
-# sign-off. High-risk queries hit a LangGraph `interrupt()` and the graph
-# state is persisted (in-memory or SQLite) so a human can approve/reject from
-# the Streamlit "📋 Approvals" tab or via /api/approvals/{thread_id}/resume.
-# See system_design/HITL_DESIGN.md for the full contract.
-USE_HITL: bool = os.getenv("USE_HITL", "false").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-HITL_RISK_THRESHOLD: float = float(os.getenv("HITL_RISK_THRESHOLD", "0.6"))
-HITL_AUTO_APPROVE_BELOW_USD: float = float(os.getenv("HITL_AUTO_APPROVE_BELOW_USD", "2000"))
-HITL_HIGH_RISK_KEYWORDS: tuple[str, ...] = tuple(
-    kw.strip().lower()
-    for kw in os.getenv(
-        "HITL_HIGH_RISK_KEYWORDS",
+
+DOMAINS: Tuple[str, ...] = _ordered_domains(_DOMAIN_REGISTRY)
+DEFAULT_DOMAIN: str = DOMAINS[0] if DOMAINS else "manufacturing"
+
+SCHEMA_PATHS: Dict[str, Path] = {
+    d: _DOMAIN_REGISTRY[d]["schema_path"] for d in DOMAINS
+}
+DOMAIN_INPUT_DIRS: Dict[str, Path] = {
+    d: INPUT_DOCS_DIR / d for d in DOMAINS
+}
+DOMAIN_QDRANT_COLLECTIONS: Dict[str, str] = {
+    d: f"{d}_corpus" for d in DOMAINS
+}
+DOMAIN_KG_PATHS: Dict[str, Path] = {
+    d: PROCESSED_DIR / f"knowledge_graph.{d}.json" for d in DOMAINS
+}
+DOMAIN_INDEX_NAMES: Dict[str, str] = {
+    d: f"{d}_index" for d in DOMAINS
+}
+DOMAIN_DISPLAY: Dict[str, Dict[str, str]] = {
+    d: _DOMAIN_REGISTRY[d]["display"] for d in DOMAINS
+}
+DOMAIN_EXAMPLES: Dict[str, list] = {
+    d: list(_DOMAIN_REGISTRY[d].get("examples") or []) for d in DOMAINS
+}
+DOMAIN_EMPTY_STATE: Dict[str, Dict[str, str]] = {
+    d: dict(_DOMAIN_REGISTRY[d].get("empty_state") or {}) for d in DOMAINS
+}
+DOMAIN_PLACEHOLDER: Dict[str, str] = {
+    d: _DOMAIN_REGISTRY[d].get("placeholder") or "" for d in DOMAINS
+}
+
+
+def normalize_domain(domain: str | None) -> str:
+    """Validate and canonicalize a domain string. Falls back to default."""
+    if not domain:
+        return DEFAULT_DOMAIN
+    d = domain.strip().lower()
+    if d not in DOMAINS:
+        raise ValueError(f"unknown domain {domain!r}; expected one of {DOMAINS}")
+    return d
+
+
+def schema_path(domain: str) -> Path:
+    return SCHEMA_PATHS[normalize_domain(domain)]
+
+
+def kg_path(domain: str) -> Path:
+    return DOMAIN_KG_PATHS[normalize_domain(domain)]
+
+
+def qdrant_collection(domain: str) -> str:
+    return DOMAIN_QDRANT_COLLECTIONS[normalize_domain(domain)]
+
+
+def index_name(domain: str) -> str:
+    return DOMAIN_INDEX_NAMES[normalize_domain(domain)]
+
+
+def input_dir(domain: str) -> Path:
+    return DOMAIN_INPUT_DIRS[normalize_domain(domain)]
+
+
+def domain_display(domain: str) -> Dict[str, str]:
+    return DOMAIN_DISPLAY[normalize_domain(domain)]
+
+# Qdrant lives under the vector store dir so a single ``rm -rf`` clears the
+# whole indexed corpus. On-disk by default; point ``QDRANT_URL`` at a remote
+# instance for distributed deployments.
+QDRANT_PATH: Path = VECTOR_STORE_DIR / "qdrant"
+
+
+class Settings(BaseSettings):
+    """Runtime configuration sourced from environment / .env file."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # ── Credentials + non-LLM models ────────────────────────────────────
+    openai_api_key: str = ""
+    ollama_base_url: str = "http://localhost:11434/v1"
+    # bge-small-en-v1.5 — same dim as MiniLM (384) but better on technical
+    # retrieval. The sentence-transformers model is a separate concern
+    # from chat completions; not routed by core/llm_router.
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+
+    # ── LLM model selection ─────────────────────────────────────────────
+    # NOTE: per-task model env vars (ANSWER_MODEL, RETRY_MODEL, CRITIC_MODEL,
+    # CLASSIFY_MODEL, CAUSE_RANK_MODEL, TOOL_PLANNER_MODEL, PROCEDURE_MODEL,
+    # ONBOARDING_MODEL, DIRECT_LLM_MODEL, CLASSICAL_RAG_MODEL, LLM_MODEL)
+    # were dropped in favour of a single switch: ``LLM_BACKEND=local|cloud|auto``.
+    # See ``core/llm_router.py``. For surgical per-task pinning, use the
+    # canonical name ``LLM_<TASK>_MODEL`` (e.g. ``LLM_CRITIC_MODEL=gpt-4o-mini``).
+
+    cause_rank_top_k: int = 5
+
+    # Optional fixed cause taxonomy (piston-style). Comma-separated list of
+    # canonical cause names. When non-empty, the cause-ranker drops any
+    # cause that is not in the list (anti-hallucination guarantee).
+    cause_taxonomy: str = ""
+
+    # ── Retrieval ───────────────────────────────────────────────────────
+    top_k_retrieval: int = 10
+    top_k_rerank: int = 5
+    rrf_k: int = 60
+    max_critic_retries: int = 2
+    default_top_k: int = 5
+    default_context_window: int = 1
+
+    # ── Cross-encoder reranker (always-on by default now) ───────────────
+    use_reranker: bool = True
+    reranker_model: str = "BAAI/bge-reranker-base"
+    rerank_candidate_pool: int = 20
+    rerank_blend_weight: float = 0.7
+
+    # ── Async parallel retrieval ────────────────────────────────────────
+    use_parallel_retrieval: bool = True
+    parallel_retrieval_timeout_s: float = 15.0
+
+    # ── Semantic cache ──────────────────────────────────────────────────
+    use_semantic_cache: bool = False
+    semantic_cache_threshold: float = 0.97
+    semantic_cache_max_size: int = 256
+    semantic_cache_ttl_seconds: int = 3600
+
+    # ── Guardrails ──────────────────────────────────────────────────────
+    use_guardrails: bool = True
+    guardrails_require_citations: bool = True
+    guardrails_min_citations: int = 1
+    guardrails_block_unsafe: bool = True
+
+    # ── Tool-calling ────────────────────────────────────────────────────
+    use_tools: bool = False
+    tool_planner_use_llm: bool = True
+
+    # ── Orchestration ───────────────────────────────────────────────────
+    use_langgraph: bool = False
+    use_cause_ranking: bool = False
+
+    # ── Two-stage generation (procedure drafting) ───────────────────────
+    # When true, after retrieval + cause-ranking the pipeline emits a
+    # structured procedure { steps: [{step, action, citations}] } via a
+    # dedicated LLM call. Renders as Markdown for legacy answer surfaces.
+    use_procedure_drafting: bool = False
+
+    # ── Advanced PDF parser ─────────────────────────────────────────────
+    # Opt-in route through ``doc_pipeline/advanced_parser`` (the vendored
+    # production-grade pipeline) for .pdf files. Handles scanned pages
+    # (OCR), multi-column layouts, cross-page tables, headers/footers,
+    # watermarks, redactions, charts, embedded attachments, and per-page
+    # fault tolerance. Other file types (.txt / .xlsx) keep the existing
+    # parser regardless of this flag.
+    use_advanced_parser: bool = False
+
+    # ── HITL approval gate ──────────────────────────────────────────────
+    use_hitl: bool = False
+    hitl_risk_threshold: float = 0.6
+    hitl_auto_approve_below_usd: float = 2000.0
+    hitl_high_risk_keywords: str = (
         "lockout,tagout,hot work,fire,explosion,h2s,arc flash,confined space,"
         "fatal,injury,death,toxic,asphyxiation,radiation,permit-to-work,"
-        "shutdown,emergency",
-    ).split(",")
-    if kw.strip()
+        "shutdown,emergency"
+    )
+    hitl_db_path: str = ""
+    hitl_checkpoint_backend: str = "sqlite"
+
+    # ── Qdrant vector store ─────────────────────────────────────────────
+    # Empty string → embedded on-disk mode at ``QDRANT_PATH``. Use ":memory:"
+    # for tests or an "http://host:6333" URL for a remote Qdrant server.
+    qdrant_url: str = ""
+    qdrant_collection: str = "manufacturing_corpus"
+
+    # ── KG retrieval floor ──────────────────────────────────────────────
+    # Minimum provenance confidence a node must have to contribute chunks
+    # to the graph allow-list. 0.0 = trust everything (legacy behaviour).
+    # 0.9 = drop narrative / LLM-extracted nodes; only structured /
+    # deterministic / human-confirmed sources contribute. Trade-off
+    # documented in DECISIONS.md.
+    kg_retrieval_min_confidence: float = 0.0
+
+    # ── Chunking ────────────────────────────────────────────────────────
+    chunk_size: int = 512
+    chunk_overlap: int = 64
+    semantic_similarity_threshold: float = 0.45
+    semantic_min_chunk_size: int = 100
+    semantic_max_chunk_size: int = 1500
+    recursive_chunk_size: int = 1000
+    recursive_chunk_overlap: int = 150
+    sliding_window_size: int = 800
+    sliding_window_step: int = 400
+    faiss_ivf_min_chunks: int = 100
+    faiss_nprobe_cap: int = 10
+
+    # ── Legacy ChromaDB path (only used if explicitly enabled) ──────────
+    chroma_collection: str = "manufacturing_docs"
+
+
+settings = Settings()
+
+
+# ── Back-compat module-level constants ──────────────────────────────────────
+# Every existing call-site does `from config import X`. We expose the
+# settings fields as upper-case constants so that import surface keeps
+# working without any module changes elsewhere.
+
+OPENAI_API_KEY: str = settings.openai_api_key
+EMBEDDING_MODEL: str = settings.embedding_model
+OLLAMA_BASE_URL: str = settings.ollama_base_url
+
+# The 11 model constants below (LLM_MODEL, ANSWER_MODEL, CRITIC_MODEL, …)
+# used to be static reads of ``settings.<field>``. They are now **dynamic**
+# via the module-level ``__getattr__`` at the bottom of this file — each
+# access delegates to ``core.llm_router.task_model(<role>)`` so that
+# flipping the active LLM backend at runtime instantly retargets every
+# call site. The legacy per-task env vars (ANSWER_MODEL, CRITIC_MODEL, …)
+# still win when explicitly set in ``.env`` — see ``_LEGACY_MODEL_ENV``.
+
+CAUSE_RANK_TOP_K: int = settings.cause_rank_top_k
+CAUSE_TAXONOMY: Tuple[str, ...] = tuple(
+    c.strip() for c in settings.cause_taxonomy.split(",") if c.strip()
 )
-HITL_DB_PATH: Path = Path(
-    os.getenv("HITL_DB_PATH", str(PROCESSED_DIR / "audit.sqlite"))
+
+TOP_K_RETRIEVAL: int = settings.top_k_retrieval
+TOP_K_RERANK: int = settings.top_k_rerank
+RRF_K: int = settings.rrf_k
+MAX_CRITIC_RETRIES: int = settings.max_critic_retries
+DEFAULT_TOP_K: int = settings.default_top_k
+DEFAULT_CONTEXT_WINDOW: int = settings.default_context_window
+
+USE_RERANKER: bool = settings.use_reranker
+RERANKER_MODEL: str = settings.reranker_model
+RERANK_CANDIDATE_POOL: int = settings.rerank_candidate_pool
+RERANK_BLEND_WEIGHT: float = settings.rerank_blend_weight
+
+USE_PARALLEL_RETRIEVAL: bool = settings.use_parallel_retrieval
+PARALLEL_RETRIEVAL_TIMEOUT_S: float = settings.parallel_retrieval_timeout_s
+
+USE_SEMANTIC_CACHE: bool = settings.use_semantic_cache
+SEMANTIC_CACHE_THRESHOLD: float = settings.semantic_cache_threshold
+SEMANTIC_CACHE_MAX_SIZE: int = settings.semantic_cache_max_size
+SEMANTIC_CACHE_TTL_SECONDS: int = settings.semantic_cache_ttl_seconds
+
+USE_GUARDRAILS: bool = settings.use_guardrails
+GUARDRAILS_REQUIRE_CITATIONS: bool = settings.guardrails_require_citations
+GUARDRAILS_MIN_CITATIONS: int = settings.guardrails_min_citations
+GUARDRAILS_BLOCK_UNSAFE: bool = settings.guardrails_block_unsafe
+
+USE_TOOLS: bool = settings.use_tools
+TOOL_PLANNER_USE_LLM: bool = settings.tool_planner_use_llm
+
+USE_LANGGRAPH: bool = settings.use_langgraph
+USE_CAUSE_RANKING: bool = settings.use_cause_ranking
+
+USE_PROCEDURE_DRAFTING: bool = settings.use_procedure_drafting
+USE_ADVANCED_PARSER: bool = settings.use_advanced_parser
+
+USE_HITL: bool = settings.use_hitl
+HITL_RISK_THRESHOLD: float = settings.hitl_risk_threshold
+HITL_AUTO_APPROVE_BELOW_USD: float = settings.hitl_auto_approve_below_usd
+HITL_HIGH_RISK_KEYWORDS: Tuple[str, ...] = tuple(
+    kw.strip().lower() for kw in settings.hitl_high_risk_keywords.split(",") if kw.strip()
 )
-# Checkpoint backend for the LangGraph orchestrator when HITL is enabled.
-# "sqlite" (default) requires `langgraph-checkpoint-sqlite`; falls back to
-# "memory" automatically if the import fails.
-HITL_CHECKPOINT_BACKEND: str = os.getenv("HITL_CHECKPOINT_BACKEND", "sqlite").strip().lower()
+HITL_DB_PATH: Path = (
+    Path(settings.hitl_db_path) if settings.hitl_db_path
+    else PROCESSED_DIR / "audit.sqlite"
+)
+HITL_CHECKPOINT_BACKEND: str = settings.hitl_checkpoint_backend.strip().lower()
 
-# ── Chunking ────────────────────────────────────────────────────────────────
-CHUNK_SIZE: int = 512
-CHUNK_OVERLAP: int = 64
+QDRANT_URL: str = settings.qdrant_url
+QDRANT_COLLECTION: str = settings.qdrant_collection
 
-SEMANTIC_SIMILARITY_THRESHOLD: float = 0.45
-SEMANTIC_MIN_CHUNK_SIZE: int = 100
-SEMANTIC_MAX_CHUNK_SIZE: int = 1500
+KG_RETRIEVAL_MIN_CONFIDENCE: float = settings.kg_retrieval_min_confidence
 
-RECURSIVE_CHUNK_SIZE: int = 1000
-RECURSIVE_CHUNK_OVERLAP: int = 150
+CHUNK_SIZE: int = settings.chunk_size
+CHUNK_OVERLAP: int = settings.chunk_overlap
+SEMANTIC_SIMILARITY_THRESHOLD: float = settings.semantic_similarity_threshold
+SEMANTIC_MIN_CHUNK_SIZE: int = settings.semantic_min_chunk_size
+SEMANTIC_MAX_CHUNK_SIZE: int = settings.semantic_max_chunk_size
+RECURSIVE_CHUNK_SIZE: int = settings.recursive_chunk_size
+RECURSIVE_CHUNK_OVERLAP: int = settings.recursive_chunk_overlap
+SLIDING_WINDOW_SIZE: int = settings.sliding_window_size
+SLIDING_WINDOW_STEP: int = settings.sliding_window_step
+FAISS_IVF_MIN_CHUNKS: int = settings.faiss_ivf_min_chunks
+FAISS_NPROBE_CAP: int = settings.faiss_nprobe_cap
 
-SLIDING_WINDOW_SIZE: int = 800
-SLIDING_WINDOW_STEP: int = 400
+SUPPORTED_EXTENSIONS: Tuple[str, ...] = (".pdf", ".txt", ".xlsx", ".xls")
 
-FAISS_IVF_MIN_CHUNKS: int = 100
-FAISS_NPROBE_CAP: int = 10
-
-SUPPORTED_EXTENSIONS: tuple[str, ...] = (".pdf", ".txt", ".xlsx", ".xls")
-
-# ── Vector store (legacy ChromaDB path — only used if explicitly enabled) ───
-CHROMAb_COLLECTION: str = "manufacturing_docs"
+# Legacy ChromaDB constants (kept for the old VectorRetriever path).
+CHROMA_COLLECTION: str = settings.chroma_collection
 CHROMA_DIR: str = str(PROCESSED_DIR / "chromadb")
+# Historical mis-spelling used by one or two call-sites — keep alias.
+CHROMAb_COLLECTION: str = CHROMA_COLLECTION
 
 # ── Domain ontology (used by KG builder) ────────────────────────────────────
 DOMAIN_ONTOLOGY = {
@@ -213,10 +426,160 @@ DOMAIN_ONTOLOGY = {
 def ensure_dirs() -> None:
     """Create runtime directories the pipeline writes to."""
     for d in (INPUT_DOCS_DIR, VECTOR_STORE_DIR, OUTPUT_DIR, PROCESSED_DIR,
-              PDF_DIR, EXCEL_DIR):
+              PDF_DIR, EXCEL_DIR, QDRANT_PATH):
         d.mkdir(parents=True, exist_ok=True)
 
 
-def llm_available() -> bool:
-    """Return True if an OpenAI API key is configured."""
+def _openai_key_valid() -> bool:
     return bool(OPENAI_API_KEY) and OPENAI_API_KEY.startswith(("sk-", "sk_"))
+
+
+def _is_local_model(model: str) -> bool:
+    """Mirror of ``core.llm_client._is_local_model`` — kept here to avoid
+    a circular import. Anything routed to Ollama is "local"."""
+    if not model:
+        return False
+    return model.startswith(("qwen", "llama", "phi", "mistral:"))
+
+
+_OLLAMA_PROBE_CACHE: dict = {}
+
+
+def _ollama_reachable(base_url: str = "", timeout: float = 1.0) -> bool:
+    """Cheap liveness probe against Ollama. Cached for the process lifetime."""
+    url = (base_url or OLLAMA_BASE_URL or "").rstrip("/")
+    if not url:
+        return False
+    if url in _OLLAMA_PROBE_CACHE:
+        return _OLLAMA_PROBE_CACHE[url]
+    # ``/v1`` is the OpenAI-compatible suffix; the native endpoint lives at
+    # the parent. Probe ``/api/tags`` on the parent — that's the standard
+    # liveness check.
+    parent = url.rsplit("/v1", 1)[0]
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"{parent}/api/tags")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ok = 200 <= resp.status < 300
+    except Exception:
+        ok = False
+    _OLLAMA_PROBE_CACHE[url] = ok
+    return ok
+
+
+def llm_available() -> bool:
+    """Return True if at least one LLM backend can serve the configured
+    answer/procedure path.
+
+    Resolves in this order:
+
+    1. Valid OpenAI key  → True (covers all cloud-model routes).
+    2. Configured answer model routes to Ollama AND Ollama is reachable
+       → True (free local stack only; cloud routes will still fail but the
+       diagnostic copilot can run end-to-end).
+    3. Otherwise → False.
+    """
+    if _openai_key_valid():
+        return True
+    # If the user has wired the answer surface to a local model, accept it
+    # as long as Ollama is actually responding. ``ANSWER_MODEL`` is resolved
+    # via the module-level ``__getattr__`` below — explicit qualifier so the
+    # name lookup goes through it.
+    answer_model = __getattr__("ANSWER_MODEL")
+    if _is_local_model(answer_model) and _ollama_reachable():
+        return True
+    return False
+
+
+# ─── Dynamic model constants (delegate to the LLM router) ───────────────────
+# Every ``from config import ANSWER_MODEL`` (and similar) used to capture a
+# static value at import time. Switching the backend at runtime would not
+# propagate. The module-level ``__getattr__`` below makes these dynamic —
+# each attribute access re-resolves via ``core.llm_router.task_model()``.
+#
+# To pin one task to a specific model (regardless of the active backend),
+# set ``LLM_<TASK>_MODEL`` in ``.env`` — e.g. ``LLM_CRITIC_MODEL=gpt-4o-mini``.
+# That's the **one** surgical-pin mechanism; the old per-task ``.env`` lines
+# (``ANSWER_MODEL=...`` etc.) have been removed.
+
+# Maps the ALL_CAPS constant name → router task role.
+_MODEL_TASK_MAP = {
+    "ANSWER_MODEL":        "answer",
+    "RETRY_MODEL":         "answer",
+    "LLM_MODEL":           "answer",
+    "PROCEDURE_MODEL":     "procedure",
+    "CRITIC_MODEL":        "critic",
+    "CLASSIFY_MODEL":      "analyze",
+    "CAUSE_RANK_MODEL":    "analyze",
+    "DIRECT_LLM_MODEL":    "analyze",
+    "CLASSICAL_RAG_MODEL": "analyze",
+    "TOOL_PLANNER_MODEL":  "tool",
+    "ONBOARDING_MODEL":    "onboarding",
+}
+
+
+def __getattr__(name: str) -> str:
+    """Module-level lazy resolution for the LLM model constants — every
+    access re-runs through ``core.llm_router.task_model()``.
+
+    Only fires when ``name`` is not in the module's namespace — i.e. only
+    for attributes deliberately removed from the static block above.
+    """
+    if name in _MODEL_TASK_MAP:
+        try:
+            from core.llm_router import task_model
+            return task_model(_MODEL_TASK_MAP[name])
+        except Exception:  # pragma: no cover — keep import healthy if router fails
+            return ""
+    raise AttributeError(f"module 'config' has no attribute {name!r}")
+
+
+# ─── Deprecation warning for legacy per-task .env model vars ────────────────
+# All LLM model selection now lives in ``core/llm_router.py`` (the PROFILES
+# table). Anyone with a pre-router ``.env`` may still have lines like
+# ``ANSWER_MODEL=...`` set — surface a one-time warning so they know those
+# lines do nothing.
+
+def _warn_about_legacy_env_vars() -> None:
+    import os
+    legacy = [
+        # Old per-task model vars.
+        "ANSWER_MODEL", "RETRY_MODEL", "PROCEDURE_MODEL", "CRITIC_MODEL",
+        "CLASSIFY_MODEL", "CAUSE_RANK_MODEL", "TOOL_PLANNER_MODEL",
+        "ONBOARDING_MODEL", "DIRECT_LLM_MODEL", "CLASSICAL_RAG_MODEL",
+        "LLM_MODEL",
+        # Backend / per-cell env vars never shipped publicly — flagged so an
+        # accidental setting is loud rather than silent.
+        "LLM_BACKEND",
+        "LLM_ANSWER_MODEL", "LLM_PROCEDURE_MODEL", "LLM_CRITIC_MODEL",
+        "LLM_ANALYZE_MODEL", "LLM_TOOL_MODEL", "LLM_ONBOARDING_MODEL",
+    ]
+    # Check the live shell env and the .env file (pydantic-settings reads
+    # the file without exporting to os.environ).
+    sources: dict = {}
+    for k in legacy:
+        v = os.environ.get(k)
+        if v:
+            sources[k] = v
+    env_file = BASE_DIR / ".env"
+    if env_file.exists():
+        try:
+            from dotenv import dotenv_values
+            for k, v in dotenv_values(env_file).items():
+                if k in legacy and v and k not in sources:
+                    sources[k] = v
+        except Exception:
+            pass
+    if sources:
+        import logging
+        logging.getLogger("config").warning(
+            "Legacy LLM env vars detected in .env (%s) — these are ignored. "
+            "LLM model selection now lives in core/llm_router.py PROFILES. "
+            "Edit that table to change model picks; use the Streamlit/Next.js "
+            "UI toggle to switch backends at runtime. Safe to delete these "
+            "lines from .env.",
+            ", ".join(sorted(sources)),
+        )
+
+
+_warn_about_legacy_env_vars()

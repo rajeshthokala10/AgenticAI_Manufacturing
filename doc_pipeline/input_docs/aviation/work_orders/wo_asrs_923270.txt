@@ -1,0 +1,11 @@
+Work Order: wo:asrs:923270
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a lead mechanic with an inspection authority (ia) rating reports about the difficulty in finding an airworthiness directive (ad) using a subscription search program and the faa's web site for an acs ignition switch in their new cirrus sr-20 aircraft. the acs switch was listed as a cirrus part in their illustrated parts catalog (ipc), without any reference to an ad.
+
+## Resolution
+I was informed today that I missed Airworthiness Directive AD 93-05-06 on our Cirrus SR20 aircraft after the compliance time specified. This occurred on aircraft X and Y that I signed-off for Progressive Cycle and Phase Completion respectively. Since this deficiency was noted, these aircraft have been inspected in accordance with the AD instructions and returned to service. 
+
+Several factors contributed to me missing this AD. First, I failed to perform appropriate Appliance AD searches as thoroughly as I could have. This AD does not show up when searching under Airframe Manufacturer at FAA.gov or using our current commercial subscription search even though the aircraft was built new with the AD switch installed. Second, the Aircraft Maintenance Manual (AMM) and Illustrated Parts Catalog (IPC) do not provide the ignition switch Manufacturers Part Number (MPN) to use under an Appliance AD search. After discovering this error, the above tail numbers and others in our fleet have been brought into compliance with the AD and we have updated our Maintenance Database System to prevent missing this AD in the future. I have now modified my AD search methods to prevent future errors of omission.

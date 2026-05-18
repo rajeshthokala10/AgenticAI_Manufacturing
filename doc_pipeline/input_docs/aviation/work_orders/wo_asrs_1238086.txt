@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1238086
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa32 pilot experiences a power loss shortly after takeoff and determines insufficient runway remains to land straight ahead and elects to land on an adjacent highway without damage or injury.
+
+## Resolution
+Taking off, I had rotated and lifted off about halfway down the runway, but stayed close to the runway to accelerate in ground effect, when about 2/3's of the runway down, I lost engine power. The engine was still running at reduced power, but I was descending. Landing straight ahead was impractical, so seeing the highway did not have any cars driving on it, I opted to land on the southbound two lanes. Since the engine was still running, on touch down I taxied to a cross over to clear the road for traffic. Emergency responders were notified, and came to assist in towing the airplane from the road back to the airport.

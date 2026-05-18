@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from config import (
+    KG_RETRIEVAL_MIN_CONFIDENCE,
     PARALLEL_RETRIEVAL_TIMEOUT_S,
     RERANK_BLEND_WEIGHT,
     RERANK_CANDIDATE_POOL,
@@ -39,11 +40,11 @@ from core.retrieval.graph_retriever import GraphRetriever
 from core.knowledge_graph import KnowledgeGraph
 from core.document_acl import filter_chunks
 
-try:
-    from core.retrieval.vector_retriever import VectorRetriever
-except ImportError:
-    # ChromaDB unavailable — fall back to FAISS-backed retriever.
-    from pipeline.faiss_retriever import FaissVectorRetriever as VectorRetriever  # type: ignore
+# Qdrant-backed retriever is the default. The legacy ChromaDB-backed
+# ``core.retrieval.vector_retriever.VectorRetriever`` is still importable
+# but only used by callers that explicitly opt in (e.g. the comparison
+# benchmark with ``USE_LEGACY_CHROMA=true``).
+from pipeline.faiss_retriever import QdrantVectorRetriever as VectorRetriever  # noqa: F401
 
 logger = logging.getLogger("core.retrieval.hybrid")
 
@@ -80,7 +81,12 @@ class HybridRetriever:
     ) -> List[Dict]:
         allow_list = None
         if use_graph_filter:
-            allow_list = self.graph.get_allow_list(query)
+            # Provenance-aware allow-list: when KG_RETRIEVAL_MIN_CONFIDENCE
+            # is raised, only high-trust (structured / human-confirmed)
+            # nodes contribute chunks. 0.0 preserves legacy behaviour.
+            allow_list = self.graph.get_allow_list(
+                query, min_confidence=KG_RETRIEVAL_MIN_CONFIDENCE,
+            )
             if not allow_list:
                 allow_list = None
 

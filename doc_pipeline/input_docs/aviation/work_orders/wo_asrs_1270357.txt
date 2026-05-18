@@ -1,0 +1,23 @@
+Work Order: wo:asrs:1270357
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c172 pilot on an instrument training flight at 7,000 feet experiences surging power and rpm. carburetor ice is suspected but carburetor heat has no positive effect. a diversion is planned and executed with the engine continuing to run throughout the descent and landing. a thorough visual inspection of the engine and another run up reveals no anomalies. the aircraft is flown back to base for an inspection by an a&p mechanic and no anomalies are noted. carburetor ice is the primary suspect.
+
+## Resolution
+I filed an IFR flight plan with 1800wxbrief.com for the first leg of my IFR Training "long cross country" flight, to be completed with my CFII as PIC. I had the aircraft refueled the evening before by the fuel truck on the field. I did a normal aircraft preflight inspection on the morning of the flight including checking the fuel sumps for water. None was observed.  
+
+After startup and upon contacting ground we were informed they had no flight plan on file after a long delay. We re-filed via telephone with FSS for immediate departure. I was advised that "Lockheed Martin was having computer problems." I contacted ground again. Again, after a long delay, they were unable to find the flight plan.
+
+Ground then contacted TRACON and manually created a flight plan for us, asking each of the required details in successive radio transmissions. At the point we were finally cleared, we had been in the run-up area with the engine idling for over 40 minutes. I did a second run-up check, out of prudence after such a long idle. I observed normal indications from the engine on each mag and with carb heat. Once we received the IFR release we departed without incident. At takeoff power the static RPM indication for my Continental O-300 engine was normal, and climb performance was normal.
+
+After several vectors and altitude changes, we were given "direct ZZZ" and 7,000 feet for the cruise portion of our flight. Shortly after reaching cruise and about 45 minutes after departure we experienced a sudden and dramatic RPM drop in the engine, followed by a series of dramatic "surges" and RPM drops. The engine was smoothly but dramatically changing between 1,900 and 2,300 RPM sporadically. There was no vibration, backfiring, or indication of a cylinder problem - it was as if power was being reduced or fuel was being starved. I immediately applied full rich mixture and full carb heat. This had no noticeable immediate effect on the engine at all. The RPM drops and surges continued. My CFII and I agreed that this was a worrying symptom, more dramatic than is usually seen from in-flight carb ice.
+
+Upon abandoning the role of "IFR Student" I looked outside and observed that we were in VMC conditions with excellent visibility and no ceiling. I immediately visually identified three airports near us. I radioed Norcal Approach and requested to cancel the IFR flight plan and continue VFR to make a precautionary landing due to a reduction in engine power. Norcal confirmed that I wanted to cancel, and then asked the requisite emergency procedure questions. Norcal advised that the two closest airports were ZZZ1 at 3nm and ZZZ2 at 10nm. I started a turn for ZZZ2, but the engine surging and power loss got worse so I decided to instead opt for ZZZ1 as it was within gliding distance should we lose all remaining engine power.
+
+Norcal then gave us all the weather info for the area and advised us that they had emergency responders on the way to ZZZ1. We switched to CTAF and advised of our arrival and pattern. I entered the pattern and execute a normal (albeit slightly high and fast) power off approach and landing without incident. After landing we taxied over to the ramp. I did another run-up test to full power and the engine operated normally with no observable loss in power. I then shut the engine and aircraft down and exited to talk with the arriving emergency response team.
+
+The Sacramento ATC operations manager had me telephone him and let him know that we landed safely and without incident. He asked as to the nature of the engine problem as well. I thanked them for their prompt and thorough assistance. My CFII and I then inspected the aircraft. Some of the local pilots on the ramp joined us. We drained fuel from the fuel strainer and observed no anomalies. It was blue and had the usual properties of 100LL Avgas. I drew multiple sumps from each of the wing sump points, all the fuel looked and smelled normal.
+
+We then removed the cowling and inspected th

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:312629
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+flc of a b25 diverted to land after 1 engine quit during cruise.
+
+## Resolution
+WE WERE MOVING A B25 FROM GSO TO FXE AND JUST N OF JAX, WE LOST THE #1 ENG. WHEN ABLE, WE CALLED JAX APCH AND ADVISED THEM WE HAD A PROB, ETC, AND THEY TOLD US, 'THEY DON'T HAVE TIME TO HANDLE US, WE HAVE OUR HANDS FULL.' THEN WE LOST RADIO WITH JAX AND LANDED AT HERLONG, FL, WITH NO PROB.

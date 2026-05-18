@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1205703
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa32 pilot reports a rough running engine and power loss at 3,500 feet. an emergency is declared and the flight diverts to the nearest suitable airport, 11 miles away where upon taxiing to ramp he forgets to change to ground frequency.
+
+## Resolution
+Not switching frequencies is a very minor sin given the circumstances and the clearance to contact Ground may have been out of habit and not any real need to contact the Ground Controller.

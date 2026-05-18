@@ -1,0 +1,395 @@
+# Aviation / piston-engine knowledge-graph schema.
+#
+# Companion to ``schemas/manufacturing.yaml`` — same kgrag L1 contract, but
+# narrowed to the aviation domain (FAA AMT chapters + ASRS work orders).
+# Loaded against its own Qdrant collection + its own KG file; see
+# ``config.SCHEMA_PATHS`` and the ``--domain aviation`` flag on main.py.
+
+version: 1
+domain: aviation
+display:
+  label: Aviation
+  emoji: "✈️"
+  color: "#B45309"   # copper / amber
+
+entity_types:
+  - name: Equipment
+    description: |
+      An aviation work-order id (ASRS / MaintNet style) or an engine id.
+      WO ids look like ``wo:asrs:435098``; engine ids like ``ENG:O-360-A4M``.
+    id_pattern: '^(?:wo:[a-z]+:\d+|ENG:[A-Z0-9_-]+)$'
+    case_sensitive: false
+
+  - name: Component
+    description: A piston-engine sub-component.
+    case_sensitive: false
+    vocabulary:
+      - magneto
+      - spark plug
+      - ignition harness
+      - carburetor
+      - fuel injector
+      - mixture
+      - fuel pump
+      - crankshaft
+      - camshaft
+      - piston
+      - connecting rod
+      - propeller
+      - exhaust valve
+      - intake valve
+      - oil pump
+      - oil cooler
+      - cylinder
+      - valve
+
+  - name: FailureMode
+    description: A piston-engine failure-mode / fault-code instance.
+    id_pattern: '^FC-\d{3}$'
+
+  - name: Symptom
+    description: |
+      An observed condition from pilot / mechanic narrative. Open-vocab
+      (NarrativeExtractor populates).
+
+  - name: Cause
+    description: A piston-engine root-cause candidate. Closed vocabulary.
+    case_sensitive: false
+    vocabulary:
+      - fouled plug
+      - bad magneto
+      - timing off
+      - carb ice
+      - induction leak
+      - contaminated fuel
+      - mixture too lean
+      - mixture too rich
+      - stuck valve
+      - worn rings
+      - fuel pump failure
+      - fuel starvation
+      - oil starvation
+      - detonation
+      - pre-ignition
+
+  - name: Procedure
+    description: A diagnostic / maintenance / repair procedure step.
+
+  - name: SparePart
+    description: An aviation spare-part number.
+    id_pattern: '^(SP|TH|BRK|SFT|HSG|GR)-\d{4}$'
+
+edge_types:
+  - name: HAS_COMPONENT
+    source: Equipment
+    target: Component
+
+  - name: CAUSES_FAILURE
+    source: [Equipment, Cause]
+    target: FailureMode
+
+  - name: HAS_SYMPTOM
+    source: Equipment
+    target: Symptom
+
+  - name: HAS_CAUSE
+    source: [Symptom, FailureMode, Equipment]
+    target: Cause
+
+  - name: RESOLVED_BY
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+  - name: REQUIRES_PART
+    source: Equipment
+    target: SparePart
+
+  - name: FOLLOWS_PROCEDURE
+    source: [FailureMode, Symptom]
+    target: Procedure
+
+traversal_routes:
+  symptom_to_fix:
+    seed_types: [Symptom]
+    walk: [HAS_CAUSE, CAUSES_FAILURE, RESOLVED_BY]
+  equipment_to_parts:
+    seed_types: [Equipment]
+    walk: [HAS_COMPONENT, REQUIRES_PART]
+
+gap_thresholds:
+  low_confidence: 0.7
+  retrieval_floor: 0.0
+
+# Per-domain LLM system prompts. Same shape as schemas/manufacturing.yaml.
+# Anything left out falls back to the module-level constants (which are
+# manufacturing-flavoured, so authoring the aviation versions here matters).
+prompts:
+  persona: aviation piston-engine maintenance copilot
+  answer_system: |
+    You are an aviation maintenance copilot specialising in piston-engine
+    diagnostics, FAA AMT chapters, and ASRS work-order analysis. You provide
+    evidence-grounded answers for mechanics, pilots, and maintenance planners.
+
+    RULES:
+    1. Only use information from the provided evidence chunks. Do not hallucinate.
+    2. Cite your sources using [source_name, chunk_id] format.
+    3. For diagnostic queries, provide: Observed Symptoms, Likely Causes, Inspection / Repair Procedure, and Safety notes (mag-ground, prop-clear, fuel-shutoff as appropriate).
+    4. Reference work-order IDs (WO:ASRS:NNNNNN), engine IDs (ENG:O-360-A4M), AMT chapter numbers, and part numbers verbatim from the evidence.
+    5. If evidence is insufficient, state what is missing rather than guessing — airworthiness decisions depend on it.
+    6. Prioritize safety-critical information; never minimise an airworthiness concern.
+  retry_system: |
+    You are an aviation maintenance copilot. Your previous answer was rejected by the
+    quality critic for the following reasons. Generate an improved answer that addresses the issues.
+
+    CRITIC FEEDBACK:
+    {critic_feedback}
+
+    RULES:
+    1. Only use information from the provided evidence chunks. Do not hallucinate.
+    2. Address every issue raised by the critic.
+    3. Cite your sources using [source_name, chunk_id] format.
+    4. Be more conservative — if evidence is uncertain, say so explicitly. Airworthiness decisions depend on it.
+  critic_rules: |
+    You are a strict quality critic for aviation piston-engine diagnostic answers.
+    Your job is to evaluate whether an answer is GROUNDED in the provided evidence.
+
+    Evaluate the answer against these criteria:
+    1. FACTUAL GROUNDING: Every claim must be traceable to a source chunk. No hallucinated facts.
+    2. COMPLETENESS: The answer should address the core question.
+    3. TECHNICAL ACCURACY: Work-order IDs, engine IDs, AMT chapter references, and part numbers must match the source data exactly.
+    4. ACTIONABILITY: For diagnostic queries, the answer must provide concrete next steps.
+    5. SAFETY: Any safety-critical inspection or run-up step must include proper warnings (mag-ground, prop-clear, fuel-shutoff).
+
+    Respond in this exact format:
+    VERDICT: PASS or FAIL
+    CONFIDENCE: 0.0 to 1.0
+    ISSUES: (list any issues found, or "None")
+    SUGGESTION: (if FAIL, describe what needs to change)
+  procedure_system: |
+    You are an aviation maintenance copilot drafting a step-by-step
+    inspection / repair procedure for the user's diagnostic query.
+
+    RULES:
+    1. The output MUST be STRICT JSON ONLY — a single object with key "steps".
+    2. Each step is an object: {"step": <int>, "action": "<imperative sentence>",
+       "citations": ["chunk_id_a", ...]}.
+    3. Every ``citations`` entry MUST be copied verbatim from the retrieved
+       evidence headers. Do NOT invent chunk ids.
+    4. Sequence the steps so safety preconditions (mag-ground, prop clear,
+       fuel shutoff, master off) come BEFORE any inspection or component handling.
+    5. Address the highest-ranked causes first. Reference work-order IDs,
+       engine IDs, and AMT chapter numbers by name.
+    6. 5-10 steps total. Keep each action short (one sentence, imperative).
+    7. No prose before or after the JSON. No markdown fences.
+  cause_rank_system: |
+    You are an aviation piston-engine root-cause analyst. Given a problem query and a set of
+    evidence chunks, identify and rank the most likely ROOT CAUSES.
+
+    RULES:
+    1. Every cause MUST be grounded in the evidence chunks provided. Do not invent causes.
+    2. Output STRICT JSON ONLY — a list of objects with keys: "cause", "score", "rationale", "evidence_chunk_ids".
+    3. "score" is a float in [0.0, 1.0] representing likelihood given the evidence. Use distinct scores.
+    4. "evidence_chunk_ids" is a list of chunk_id strings copied verbatim from the evidence headers.
+    5. Rank from MOST LIKELY (top) to LEAST LIKELY (bottom).
+    6. Return AT MOST {top_k} causes.
+    7. If the query is not about troubleshooting / failure analysis, return an empty list [].
+    {taxonomy_clause}
+    8. No prose before or after the JSON. No markdown fences.
+  classify_system: |
+    You classify aviation piston-engine maintenance queries into exactly one intent category.
+
+    Categories:
+    - troubleshoot: diagnosing engine faults, rough running, mag drops, fuel-system anomalies, ASRS incidents
+    - procedure: step-by-step instructions for inspection, replacement, calibration, run-up, AMT-chapter procedures
+    - specification: looking up engine / component specs, AMT chapter values, torque values, run-up parameters
+    - alarm: understanding specific fault codes or pilot-reported alerts and recommended actions
+    - inventory: spare-part availability, ordering, lead times, on-aircraft kit contents
+    - general: anything that doesn't fit the above categories
+
+    Respond with ONLY a JSON object, no other text:
+    {"intent": "<category>", "confidence": <0.0-1.0>}
+  risk_grader_system: You are an aviation maintenance safety grader. Return one float in [0,1].
+  risk_grader_user: |
+    On a scale of 0.0 (clearly safe to auto-approve) to 1.0 (must be reviewed by a certified mechanic / DAR),
+    score the airworthiness risk of executing the following proposed action on a piston-engine aircraft.
+    Reply with ONE number only, no prose.
+
+# HITL escalation keywords for aviation. Drops manufacturing-only terms
+# (LOTO, H2S, arc flash) in favour of airworthiness-relevant hazards.
+safety:
+  high_risk_keywords:
+    - emergency
+    - mayday
+    - in-flight
+    - airworthiness
+    - return to service
+    - prop strike
+    - fuel leak
+    - oil starvation
+    - in-flight fire
+    - engine fire
+    - hot start
+    - detonation
+    - pre-ignition
+    - mel deferral
+    - ad compliance
+    - airworthiness directive
+    - service bulletin
+    - fatal
+    - injury
+
+placeholder: "Ask anything about piston-engine maintenance, work orders, or the FAA AMT chapters…"
+empty_state:
+  heading: "What does the piston engine need today?"
+  blurb: >
+    I diagnose piston-engine faults, walk through inspection procedures,
+    and search 500 ASRS work orders + the FAA AMT chapters.
+# Per-domain query corrections. Merged on top of the built-in manufacturing
+# defaults — leave empty to use only the defaults. Schema entries win on
+# collision so a domain can override an acronym mapping if needed.
+# Per-domain clarifier extras. Each block extends the manufacturing
+# defaults — schema entries layer on top, they don't replace.
+clarifier:
+  equipment_patterns:
+    - { pattern: '\b(WO:ASRS:\d+)\b',   type: work_order_id }
+    - { pattern: '\b(ENG:[A-Z0-9_-]+)\b', type: engine_id }
+  metric_names:
+    egt: Exhaust Gas Temperature
+    cht: Cylinder Head Temperature
+    mp:  Manifold Pressure
+    rpm: Revolutions Per Minute
+  # Additional intent regexes — layered ON TOP of the manufacturing
+  # defaults (which cover generic troubleshoot / root_cause / procedure
+  # phrasing). Aviation-specific terms go here so e.g. "mag drop on
+  # run-up" classifies as TROUBLESHOOTING with high confidence.
+  intent_patterns:
+    - intent: TROUBLESHOOTING
+      patterns:
+        - '\b(mag.?drop|magneto drop|p[- ]lead)\b'
+        - '\b(carb ice|carburet?or ic(?:ing|e))\b'
+        - '\b(rough (?:run|idle|mag)|rough running)\b'
+        - '\b(detonation|pre.?ignition|backfir(?:e|ing))\b'
+        - '\b(fuel (?:starvation|exhaustion)|induction leak)\b'
+        - '\b(hot start|cold start)\b'
+      boost: 0.93
+    - intent: PROCEDURE
+      patterns:
+        - '\b(run.?up|mag check|compression check)\b'
+        - '\b(annual|100[- ]?hour|progressive) inspection\b'
+        - '\b(AMT chapter|FAA chapter)\b'
+      boost: 0.90
+    - intent: METRIC_QUERY
+      patterns:
+        - '\b(egt|cht|mp|map|rpm)\b'
+        - '\bmanifold (?:pressure|temp)\b'
+      boost: 0.86
+    - intent: COMPLIANCE
+      patterns:
+        - '\b(airworthiness directive|ad compliance|service bulletin|sb \d+)\b'
+        - '\b(mel|minimum equipment list|return to service)\b'
+        - '\b(part 91|part 135|far \d+)\b'
+      boost: 0.92
+    - intent: STATUS
+      patterns:
+        - '\bWO:ASRS:\d+\b'
+        - '\bENG:[A-Z0-9_-]+\b'
+      boost: 0.88
+  # Per-intent slot overrides — REPLACE the manufacturing defaults for
+  # the listed intents. Anything not listed here keeps the manufacturing
+  # defaults so generic LOOKUP / UNKNOWN flows still work.
+  slot_templates:
+    TROUBLESHOOTING:
+      - name: aircraft_or_engine
+        entity_types: [engine_id, equipment_id]
+        required: true
+        prompt: "Which engine or aircraft? (e.g., ENG:O-360-A4M, N12345)"
+      - name: symptom
+        entity_types: []
+        required: false
+        prompt: "What symptom — mag drop, rough running, low MP, carb ice?"
+      - name: phase_of_flight
+        entity_types: []
+        required: false
+        prompt: "When did it occur — run-up, takeoff, cruise, descent?"
+    PROCEDURE:
+      - name: process
+        entity_types: []
+        required: true
+        prompt: "Which procedure? (e.g., 100-hour inspection, mag check, compression check)"
+      - name: engine_model
+        entity_types: [engine_id, equipment_id]
+        required: false
+        prompt: "For which engine model?"
+    METRIC_QUERY:
+      - name: metric
+        entity_types: [metric]
+        required: true
+        prompt: "Which metric — EGT, CHT, MP, RPM, fuel flow?"
+      - name: cylinder_or_engine
+        entity_types: [engine_id, equipment_id]
+        required: false
+        prompt: "For which cylinder or engine?"
+    COMPLIANCE:
+      - name: reference
+        entity_types: [standard, regulation]
+        required: false
+        prompt: "Which AD, SB, or FAR? (e.g., AD 2019-12-04, SB 632B)"
+      - name: aircraft_or_fleet
+        entity_types: [engine_id, equipment_id]
+        required: false
+        prompt: "Which aircraft, engine, or fleet?"
+
+# Structured procedure drafter — opt in/out and customise the trigger
+# intents. Aviation runs it on the same intents as manufacturing because
+# both domains genuinely produce sequential procedures. A purely
+# expository domain (medical reference, legal lookup) should set
+# ``enabled: false`` to skip the drafter entirely.
+procedure:
+  enabled: true
+  # Substrings; ``trigger in intent`` is the match rule, so "diagnos"
+  # catches diagnose / diagnosis / diagnostic / diagnose-rough-running.
+  trigger_intents:
+    - troubleshoot
+    - troubleshooting
+    - root_cause
+    - alarm
+    - procedure
+    - diagnos
+    - failure
+    - fault
+    - repair
+
+corrections:
+  acronyms:
+    tkof: takeoff
+    agl: above ground level
+    msl: mean sea level
+    mel: minimum equipment list
+    asrs: Aviation Safety Reporting System
+    far: federal aviation regulation
+    amt: aviation maintenance technician
+    mpa: manifold pressure
+    egt: exhaust gas temperature
+    cht: cylinder head temperature
+    rpm: revolutions per minute
+  misspellings:
+    carberator: carburetor
+    carburator: carburetor
+    magnetto: magneto
+    spakplug: spark plug
+  synonyms:
+    "carb ice": ["carburetor icing", "induction icing"]
+    "rough running": ["rough idle", "engine roughness"]
+    "fuel starvation": ["fuel exhaustion", "no fuel"]
+
+examples:
+  - "Engine quit on takeoff in humid conditions — likely cause?"
+  - "Carb ice on a Cessna 172 — symptoms and recovery procedure"
+  - "Magneto drop excessive during run-up — diagnose"
+  - "Rough running at idle after fuel-system maintenance"
+  - "Stuck exhaust valve — what does the inspection procedure look like?"
+  - "Loss of oil pressure during cruise — emergency actions"
+  - "Backfiring during start — mixture or timing?"
+  - "Fuel starvation incident WO:ASRS:589646 — resolution?"
+  - "Detonation symptoms vs pre-ignition: how to tell?"
+  - "Carburetor heat does not restore power — what next?"

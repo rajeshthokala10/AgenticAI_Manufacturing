@@ -1,0 +1,17 @@
+Work Order: wo:asrs:845738
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+after replacing the # 1 engine start switch on a b737-300, a line mechanic attempts to perform two additional functions of the start switch that were not required, but led to an inadvertent engine start and high egt overheat condition. the engine was subsequently replaced.
+
+## Resolution
+Aircraft had pilot write up, "#1 engine start switch sticking, will not cutoff." I replaced the switch. While doing functional test "audible test of ignition system," I tested all switch positions to verify ignition system worked correctly and before the final step of returning plane to usual condition (returning start lever to cutoff position), I thought that I would check two other functions of the switch. 
+1) the holding solenoid, and 
+2) start valve operation (note these 2 checks are not required check, but I was thinking I didn't want the (flight) crew to come out and not have this working on the morning flight; it was incorrect to do it all this time). 
+
+I checked the solenoid by cycling the circuit breaker and next I started the APU to check the start valve. I put the switch to the "GRN" (ground) position and checked the start valve light to see that it opened. (I was not looking at the engine instruments because I was not expecting it to start.)
+
+Unknown to me, the engine started because I had inadvertently left the start lever up. As I was shutting it off, I first noticed Engine Indications, but it was too late. I don't know how high EGT was, but it was 580 degrees and decreasing when I was able to focus on it. As a result, I suspected engine was overheated. I called the Powerplant Engineer and told him what I did. He said a borescope was needed and after borescope they decided to change the engine before further flight. 
+
+I made a very poor decision, even though I knew the correct procedure. Although my motive was to be thorough, thinking on the spur of the moment I decided to "Ad Lib" check the start valve, which was not required. If I had followed correct procedures and returned aircraft to normal after checking ignition, I would not have caused damage.

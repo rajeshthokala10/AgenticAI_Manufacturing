@@ -1,0 +1,9 @@
+Work Order: wo:asrs:852232
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+an m20j pilot declared an emergency and diverted when he experienced a high temperature on the number four engine cylinder head.
+
+## Resolution
+During the cruise portion of trip at 7,000 FT, the engine monitor showed an unusually high CHT reading on cylinder #4 (climbed quickly to 537F from mid 300's).  I immediately notified ATC (under their control already), asked for immediate assistance and vectors to a nearby airport for immediate landing.  I was asked if I wanted to declare an emergency.  I said that I thought that I should.  I was given priority handling and landed uneventfully. After landing and parking, I consulted with the local mechanic together with my home airport mechanic who both concluded that it was likely that cylinder #4 probe was the culprit. I departed after the local mechanic approved my departure, and returned home without further incident.

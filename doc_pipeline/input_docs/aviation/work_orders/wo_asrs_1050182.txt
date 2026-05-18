@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1050182
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a repair shop mechanic describes the events that led to the discovery that unapproved chrome cylinders had been installed on a grumman aa1 aircraft's lycoming 0-235-c2c engine, approximately 24 years earlier.
+
+## Resolution
+Reporter's callback information and the resultant investigation of reporter by the FAA is another example of why many certificated airmen do not go to the FAA when discrepancies have been noted.

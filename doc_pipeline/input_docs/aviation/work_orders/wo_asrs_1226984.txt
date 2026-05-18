@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1226984
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+be35 pilot reports flying a new engine break in flight at 5,500 feet and returning. the next flight is planned at 500 agl to increase manifold pressure. when cht begins to rise few options remain.
+
+## Resolution
+The average terrain elevation in this location may make this break-in procedure inadvisable. A rebuilt engine offers many opportunities for mistakes that can cause the engine to fail. Staying within gliding range of an airport is usually desirable.

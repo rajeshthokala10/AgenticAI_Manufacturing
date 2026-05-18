@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1049932
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+pa44 instructor pilot reports shutting down the right engine at 5,500 feet for training then being unable to restart it after three tries. an emergency is declared but during descent a fourth attempt to restart is successful and the emergency is canceled.
+
+## Resolution
+The air temperature was likely very cold during this event making the restart more difficult, but persistence pays at least in this case.

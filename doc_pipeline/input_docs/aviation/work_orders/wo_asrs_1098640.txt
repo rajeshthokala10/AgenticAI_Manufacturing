@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1098640
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a king air c90 e90 pilot noticed fuel leaking from the top of the right engine nacelle, so he declared an emergency, diverted to a nearby airport and after an uneventful landing maintenance discovered a gasket separation was allowing the leak.
+
+## Resolution
+Great job.

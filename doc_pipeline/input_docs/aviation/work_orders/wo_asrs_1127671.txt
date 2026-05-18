@@ -1,0 +1,13 @@
+Work Order: wo:asrs:1127671
+Subsystem: fuel_metering
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+emb-145ep first officer reported tower informed them of a fuel leak shortly after takeoff. flight returned to departure airport for a precautionary landing.
+
+## Resolution
+We pushed out on time and starting taxiing. We ran checklist and procedures as normal and didn't notice anything out of the normal. We took off and turned to heading 180 as instructed. Once in the turn Tower told us that there was some fluid coming out of the right wing and it was clearly visible during takeoff. We immediately requested to level off and Tower said "maintain 6,000". Shortly after, they also gave us a frequency change for further assistance if needed. I asked the Captain what he wanted to do and he said "we are going to do a precautionary air return to [departure airport]". 
+
+I contacted Departure with altitude and our intentions to return, they asked for souls and fuel onboard even though we did not declare an emergency. I also stated that the reason for the return was a possible fuel leak and the return was precautionary. We also requested delayed vectors so we could analyze the situation, run any required checklist and set the airplane ready for landing. We ran the QRH on "Fuel Leak", and after only noticing that the right tank was consuming fuel at a faster rate than the left one, we started to get the airplane ready to land. 
+
+Captain also asked for any input our jumpseater may have had, but he had nothing to say except to ask the Flight Attendant to check the top of the right wing for any abnormality. We brought the airplane down to the ground safely. We landed and came to a complete stop for the Fire Inspector to do a visual check. The Fire Inspector told us that is was ok to continue to the ramp shortly after. Captain contacted Maintenance Control and the issue was left in their hands.

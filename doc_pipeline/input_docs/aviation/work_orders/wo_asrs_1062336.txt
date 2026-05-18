@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1062336
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+kitfox pilot experiences an engine failure at 4,000 feet and lands on a highway. the wings are folded and the aircraft is towed back to the airport.
+
+## Resolution
+Good job.

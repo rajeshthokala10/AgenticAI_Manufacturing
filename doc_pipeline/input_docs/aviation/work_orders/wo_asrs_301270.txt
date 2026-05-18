@@ -1,0 +1,9 @@
+Work Order: wo:asrs:301270
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+plt of an sma sel struck another aircraft parked next to the txwy after drifting off the side of the txwy due to distr.
+
+## Resolution
+TAXIING IN NARROW TXWY. DISTRACTED BY PAX. DRIFTED TO R. R WINGTIP HIT ANOTHER ACFT'S PROP AND COWLING. CRACKED MY PLASTIC WINGTIP FAIRING, DENTED OTHER PLANE'S COWLING AND SCRATCHED PROP. PUT SOME DUCT TAPE OVER MY WINGTIP CRACKS AND FLEW BACK TO SANTA MONICA, AND LATER TO WHITEMAN FOR REPAIR.

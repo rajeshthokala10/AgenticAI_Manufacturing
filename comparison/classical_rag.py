@@ -1,8 +1,9 @@
 import time
 from typing import Dict, List
 
-from config import TOP_K_RERANK, CLASSICAL_RAG_MODEL
+from config import TOP_K_RERANK
 from core.llm_client import call_llm_with_metrics
+from core.llm_router import task_model
 
 try:
     from core.retrieval.vector_retriever import VectorRetriever
@@ -48,7 +49,7 @@ class ClassicalRAG:
             system_prompt=CLASSICAL_RAG_PROMPT.format(context=context),
             user_prompt=raw_query,
             temperature=0.3,
-            model=CLASSICAL_RAG_MODEL,
+            model=task_model("analyze"),
         )
         gen_time = (time.time() - gen_start) * 1000
 

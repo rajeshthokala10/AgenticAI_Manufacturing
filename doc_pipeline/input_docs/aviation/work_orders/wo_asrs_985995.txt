@@ -1,0 +1,9 @@
+Work Order: wo:asrs:985995
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+c404 pilot experiences a loss of power after takeoff at maximum weight from a high altitude airport. the aircraft will not maintain altitude, but the propeller is not feathered until the tower is informed of the return, which takes three attempts.
+
+## Resolution
+The maximum weight takeoff calculation includes the ability of the aircraft to fly on one engine. If the aircraft will not maintain level flight, the bad engine should be shut down and the propeller feathered.

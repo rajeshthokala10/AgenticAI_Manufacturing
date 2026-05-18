@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1026162
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a child in a be-35's right seat accidentally turned the ignition key off and knocked it out. after loosing power the pilot declared an emergency and returned to land on a closed runway.
+
+## Resolution
+This is almost comical except for the fact that it was also almost deadly.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1142221
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+the pilot of a cessna 402 experienced a rough running engine in cruise flight. after cycling the magneto switch, he observed that the right engine had a malfunctioning right magneto, so he elected to return to the departure airport where a successful landing was performed.
+
+## Resolution
+The pilot did not state it, but it assumed that the magneto check was performed prior to takeoff with successful results. If so, then this component failed when observed, and supports the redundancy requirements of the industry.

@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1255970
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+gyrocopter pilot experiences low power after a short descent in humid conditions. with open pasture below a precautionary landing is accomplished. intake icing is suspected.
+
+## Resolution
+Departed with passenger on a scenic flight. About 40 minutes into flight, reduced throttle and descended from 900 ft. to 500 ft. When throttle added, Subaru engine choked each time I attempted to add power above low cruise. I was over open pasture and conducted a safe precautionary landing. No damage or injuries. Upon return to airport, engine checked out and no systems found defective. Engine test run on ground to full throttle with no issues. Conditions were humid and icing is suspected.

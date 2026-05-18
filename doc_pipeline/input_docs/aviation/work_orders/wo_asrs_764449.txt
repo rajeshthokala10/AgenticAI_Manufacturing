@@ -1,0 +1,9 @@
+Work Order: wo:asrs:764449
+Subsystem: ignition
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+a b737-300 inspector reports of verifying a #2 engine igniter lead replacement, but was unaware of the undocumented prsov valve sense line being disconnected by mechanic for access to the igniter lead.
+
+## Resolution
+WAS ASSIGNED #2 ENG INSPECTION THAT NIGHT. DURING INSPECTION FOUND LIGHT IGNITER LEAD CONDUCTOR OF EVIDENCE OF ARCING. MECH THEN REPLACED LEAD. THEN I INSPECTED ROUTING OF CABLE. MAINT MANUAL DOES NOT CALL FOR CTL AIR LINE DISCONNECTION FOR CABLE ROUTING. SO I WAS UNAWARE LINE WAS DISCONNECTED. MY FOCUS OF INSPECTION WAS ONLY THE CABLE ROUTING THROUGH ENG TO EXCITER BOX.

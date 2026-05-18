@@ -1,0 +1,9 @@
+Work Order: wo:asrs:1153571
+Subsystem: both
+Source: ASRS (Aviation Safety Reporting System)
+
+## Complaint
+air taxi pilot experiences low engine power which results in landing on a frozen lake. after landing the wheels break through the surface ice and come to rest on a second layer of ice. with the engine still running the reporter is able to taxi to the shore and call for assistance.
+
+## Resolution
+Very inventive, and there was no real reason not to try to get the aircraft to the shore.
