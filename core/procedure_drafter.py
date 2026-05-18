@@ -33,7 +33,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from config import PROCEDURE_MODEL
+from core.domain_prompts import get_prompt
+from core.llm_router import task_model
 from core.llm_client import call_llm_with_metrics
 
 logger = logging.getLogger("core.procedure_drafter")
@@ -192,13 +193,17 @@ def draft_procedure(
     evidence_chunks: List[Dict[str, Any]],
     *,
     feedback: Optional[str] = None,
-    model: str = PROCEDURE_MODEL,
+    model: Optional[str] = None,
+    domain: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Generate a structured procedure for the user's troubleshooting query.
 
     Returns a dict with the parsed ``Procedure`` plus LLM usage metrics so
     the caller can fold token counts and cost into the overall response.
+    Defaults to the router's ``procedure`` task model.
     """
+    if model is None:
+        model = task_model("procedure")
     base_metrics: Dict[str, Any] = {
         "procedure": Procedure().to_dict(),
         "prompt_tokens": 0,
@@ -218,7 +223,7 @@ def draft_procedure(
 
     try:
         llm_result = call_llm_with_metrics(
-            system_prompt=PROCEDURE_SYSTEM_PROMPT,
+            system_prompt=get_prompt(domain, "procedure_system", PROCEDURE_SYSTEM_PROMPT),
             user_prompt=user_prompt,
             temperature=0.2,
             max_tokens=1200,

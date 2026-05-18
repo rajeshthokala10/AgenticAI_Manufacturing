@@ -224,6 +224,25 @@ class DocumentIngestion:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         ext = path.suffix.lower()
+
+        # Opt-in route: when USE_ADVANCED_PARSER is on, .pdf files go
+        # through the vendored production-grade pipeline (multi-column /
+        # OCR / cross-page tables / header-footer stripping / fault
+        # tolerance). Other extensions keep the existing parser path.
+        if ext == ".pdf":
+            try:
+                from config import USE_ADVANCED_PARSER  # noqa: PLC0415
+            except Exception:
+                USE_ADVANCED_PARSER = False
+            if USE_ADVANCED_PARSER:
+                from doc_pipeline.advanced_bridge import parse_pdf_advanced  # noqa: PLC0415
+                docs = parse_pdf_advanced(path)
+                logger.info(
+                    "Ingested %s via advanced parser: %d document segments",
+                    path.name, len(docs),
+                )
+                return docs
+
         parser = self.parsers.get(ext)
         if not parser:
             raise ValueError(

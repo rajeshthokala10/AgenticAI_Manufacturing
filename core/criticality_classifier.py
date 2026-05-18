@@ -29,11 +29,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from config import (
-    CAUSE_RANK_MODEL,
     HITL_AUTO_APPROVE_BELOW_USD,
     HITL_HIGH_RISK_KEYWORDS,
     HITL_RISK_THRESHOLD,
 )
+from core.domain_prompts import get_high_risk_keywords
+from core.llm_router import task_model
 
 logger = logging.getLogger("core.criticality")
 
@@ -89,25 +90,40 @@ def _extract_dollar_amount(text: str) -> Optional[float]:
     return max(amounts) if amounts else None
 
 
-def _llm_grade(query: str, proposed_answer: str) -> Optional[float]:
+_DEFAULT_RISK_GRADER_SYSTEM = (
+    "You are a plant-safety risk grader. Return one float in [0,1]."
+)
+_DEFAULT_RISK_GRADER_USER = (
+    "On a scale of 0.0 (clearly safe to auto-approve) to 1.0 (must be "
+    "reviewed by a human supervisor), score the operational risk of "
+    "executing the following proposed action in a manufacturing plant. "
+    "Reply with ONE number only, no prose."
+)
+
+
+def _llm_grade(
+    query: str,
+    proposed_answer: str,
+    domain: Optional[str] = None,
+) -> Optional[float]:
     """Optional tier-2 LLM grader. Returns ``None`` on any failure."""
     try:
         from core.llm_client import call_llm  # local import to keep startup snappy
+        from core.domain_prompts import get_prompt
     except Exception:  # pragma: no cover
         return None
 
+    system = get_prompt(domain, "risk_grader_system", _DEFAULT_RISK_GRADER_SYSTEM)
+    user_preface = get_prompt(domain, "risk_grader_user", _DEFAULT_RISK_GRADER_USER)
     prompt = (
-        "On a scale of 0.0 (clearly safe to auto-approve) to 1.0 (must be "
-        "reviewed by a human supervisor), score the operational risk of "
-        "executing the following proposed action in a manufacturing plant. "
-        "Reply with ONE number only, no prose.\n\n"
+        f"{user_preface}\n\n"
         f"USER QUERY:\n{query}\n\nPROPOSED ANSWER:\n{proposed_answer[:1500]}"
     )
     try:
         out = call_llm(
-            system_prompt="You are a plant-safety risk grader. Return one float in [0,1].",
+            system_prompt=system,
             user_prompt=prompt,
-            model=CAUSE_RANK_MODEL,  # reuse the cheap free local model
+            model=task_model("analyze"),  # reuse the cheap free local model
             temperature=0.0,
             max_tokens=8,
         )
@@ -132,14 +148,22 @@ def classify(
     critic_confidence: Optional[float] = None,
     purchase_request: Optional[Dict[str, Any]] = None,
     threshold: float = HITL_RISK_THRESHOLD,
-    keywords=HITL_HIGH_RISK_KEYWORDS,
+    keywords=None,
     enable_llm_grader: bool = True,
+    domain: Optional[str] = None,
 ) -> Risk:
     """Score the proposed answer / action and decide whether to escalate.
 
     Returns a :class:`Risk` instance. The orchestrator route depends only on
     ``Risk.needs_human``.
+
+    When ``keywords`` is None we resolve them from the schema YAML for
+    ``domain`` (``safety.high_risk_keywords``); a missing block falls back to
+    ``config.HITL_HIGH_RISK_KEYWORDS`` so legacy callers see no change.
     """
+
+    if keywords is None:
+        keywords = get_high_risk_keywords(domain, HITL_HIGH_RISK_KEYWORDS)
 
     score = 0.0
     drivers: List[str] = []
@@ -188,7 +212,7 @@ def classify(
 
     # ── Rule 5: tier-2 LLM grader for the inconclusive band ───────────────
     if enable_llm_grader and 0.3 < score < 0.7:
-        graded = _llm_grade(query, proposed_answer)
+        graded = _llm_grade(query, proposed_answer, domain=domain)
         if graded is not None:
             score = max(score, graded)
             drivers.append(f"llm_grader:{graded:.2f}")

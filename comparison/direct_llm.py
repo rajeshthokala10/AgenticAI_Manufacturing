@@ -1,8 +1,8 @@
 import time
 from typing import Dict
 
-from config import DIRECT_LLM_MODEL
 from core.llm_client import call_llm_with_metrics
+from core.llm_router import task_model
 
 
 DIRECT_SYSTEM_PROMPT = """You are a manufacturing equipment assistant. Answer questions about
@@ -18,7 +18,7 @@ def direct_llm_query(raw_query: str) -> Dict:
         user_prompt=raw_query,
         temperature=0.7,
         max_tokens=1500,
-        model=DIRECT_LLM_MODEL,
+        model=task_model("analyze"),
     )
 
     total_time = (time.time() - start) * 1000

@@ -221,7 +221,61 @@ def domain_border_style(domain: str | None) -> str:
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────
 def render_sidebar() -> dict:
+    from core.llm_router import (
+        get_active_backend,
+        set_active_backend,
+        status as llm_status,
+    )
+
     with st.sidebar:
+        # ── LLM backend selector ───────────────────────────────────────
+        st.markdown("### 🤖 LLM backend")
+        backend_status = llm_status()
+        active_backend = backend_status["active"]
+        # Each option label hints which models will be used.
+        backend_labels = {
+            "auto":  f"🪄 Auto · resolves to {backend_status['active'].title()}",
+            "cloud": "☁️ Cloud · OpenAI (gpt-4o / gpt-4o-mini)",
+            "local": "💻 Local · Ollama (qwen2.5:3b)",
+        }
+        # Disable cloud if the key is invalid.
+        available = ["auto", "local"]
+        if backend_status["openai_key_valid"]:
+            available.append("cloud")
+        else:
+            backend_labels["cloud"] += " · ⚠ key missing"
+        raw_backend = backend_status["raw"]
+        if raw_backend not in available:
+            raw_backend = "auto"
+        backend_pick = st.selectbox(
+            "LLM backend",
+            options=["auto", "local", "cloud"],
+            index=["auto", "local", "cloud"].index(raw_backend),
+            format_func=lambda b: backend_labels[b],
+            label_visibility="collapsed",
+            key="llm_backend_selector",
+        )
+        if backend_pick == "cloud" and not backend_status["openai_key_valid"]:
+            st.warning(
+                "OpenAI key not detected — set OPENAI_API_KEY in `.env`. "
+                "Staying on the previous backend."
+            )
+        elif backend_pick != raw_backend:
+            try:
+                set_active_backend(backend_pick)
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+        # Active-backend chip
+        backend_color = "#10B981" if active_backend == "local" else "#0EA5E9"
+        backend_emoji = "💻" if active_backend == "local" else "☁️"
+        st.markdown(
+            f"<div style='font-size:0.8rem;color:{backend_color};margin-bottom:8px;'>"
+            f"{backend_emoji} <b>{active_backend}</b> &middot; "
+            f"answer=<code>{backend_status['per_task']['answer']}</code></div>",
+            unsafe_allow_html=True,
+        )
+
         # ── Domain selector ────────────────────────────────────────────
         st.markdown("### 🗂️ Active domain")
         domain_choice = st.selectbox(
@@ -1348,8 +1402,8 @@ def tab_onboard_domain() -> None:
                         tf.write(uf.read())
                         tmp_path = tf.name
                     try:
-                        parsed = ing.parse_file(tmp_path)
-                        docs.append("\n\n".join(p.text for p in parsed))
+                        parsed = ing.ingest_file(tmp_path)
+                        docs.append("\n\n".join(p.content for p in parsed))
                     finally:
                         Path(tmp_path).unlink(missing_ok=True)
             state["docs"] = docs
@@ -1433,7 +1487,11 @@ def tab_onboard_domain() -> None:
         follow_ups = resp.get("follow_up_questions") or []
         if follow_ups and not resp.get("ready_to_generate"):
             st.markdown("#### Follow-up questions")
-            st.caption("Answer each then click **Submit answers & re-run** below.")
+            st.caption(
+                "Answer what you can, then **Submit answers & re-run** — or hit "
+                "**Skip & generate now** to take a best-effort schema from "
+                "current evidence and iterate later."
+            )
             for i, q in enumerate(follow_ups):
                 state["current_answers"][i] = st.text_area(
                     f"Q{i+1}. {q}",
@@ -1441,30 +1499,63 @@ def tab_onboard_domain() -> None:
                     key=f"onboard_answer_{i}",
                     height=70,
                 )
-            if st.button("➡️ Submit answers & re-run", use_container_width=True):
-                pairs = [
-                    {"question": q, "answer": state["current_answers"].get(i, "").strip()}
-                    for i, q in enumerate(follow_ups)
-                ]
-                state["prior_qa"].extend([p for p in pairs if p["answer"]])
-                try:
-                    from core.onboarding_agent import analyze
-                    with st.spinner(f"Re-running with your answers…"):
-                        resp2 = analyze(
-                            state["domain_id"],
-                            state["docs"],
-                            domain_hint=state["domain_hint"],
-                            prior_qa=state["prior_qa"],
-                        )
-                    state["agent_response"] = resp2.to_dict()
-                    state["current_answers"] = {}
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Re-run failed: {e}")
+            submit_col, skip_col = st.columns(2)
+            with submit_col:
+                if st.button("➡️ Submit answers & re-run", use_container_width=True):
+                    pairs = [
+                        {"question": q, "answer": state["current_answers"].get(i, "").strip()}
+                        for i, q in enumerate(follow_ups)
+                    ]
+                    state["prior_qa"].extend([p for p in pairs if p["answer"]])
+                    try:
+                        from core.onboarding_agent import analyze
+                        with st.spinner(f"Re-running with your answers…"):
+                            resp2 = analyze(
+                                state["domain_id"],
+                                state["docs"],
+                                domain_hint=state["domain_hint"],
+                                prior_qa=state["prior_qa"],
+                            )
+                        state["agent_response"] = resp2.to_dict()
+                        state["current_answers"] = {}
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Re-run failed: {e}")
+            with skip_col:
+                if st.button("⏩ Skip & generate now", use_container_width=True,
+                             help="Force the agent to emit a YAML even if it still has questions."):
+                    try:
+                        from core.onboarding_agent import analyze
+                        with st.spinner("Force-generating best-effort schema…"):
+                            resp2 = analyze(
+                                state["domain_id"],
+                                state["docs"],
+                                domain_hint=state["domain_hint"],
+                                prior_qa=state["prior_qa"],
+                                force_generate=True,
+                            )
+                        state["agent_response"] = resp2.to_dict()
+                        state["current_answers"] = {}
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Force-generate failed: {e}")
 
         # YAML preview + validation report
         if resp.get("yaml"):
-            st.markdown("#### Proposed schema YAML")
+            preview_col, dl_col = st.columns([8, 2])
+            with preview_col:
+                st.markdown("#### Proposed schema YAML")
+            with dl_col:
+                # Always available — even if validation fails the user can
+                # grab the YAML, hand-edit it, and re-run the pipeline.
+                st.download_button(
+                    label="⬇️ Download",
+                    data=resp["yaml"],
+                    file_name=f"{state['domain_id'] or 'new_domain'}.yaml",
+                    mime="text/yaml",
+                    use_container_width=True,
+                    key="onboard_dl",
+                )
             st.code(resp["yaml"], language="yaml")
 
             val = resp.get("validation") or {}

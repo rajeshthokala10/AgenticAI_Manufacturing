@@ -21,7 +21,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from config import CAUSE_RANK_MODEL, CAUSE_RANK_TOP_K, CAUSE_TAXONOMY
+from config import CAUSE_RANK_TOP_K, CAUSE_TAXONOMY
+from core.domain_prompts import get_prompt
+from core.llm_router import task_model
 from core.llm_client import call_llm_with_metrics
 
 logger = logging.getLogger("core.cause_ranker")
@@ -188,18 +190,20 @@ def rank_causes(
     evidence_chunks: List[Dict[str, Any]],
     graph_context: Optional[Dict[str, Any]] = None,
     top_k: int = CAUSE_RANK_TOP_K,
-    model: str = CAUSE_RANK_MODEL,
+    model: Optional[str] = None,
     taxonomy: Optional[Tuple[str, ...]] = None,
+    domain: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the cause-ranking LLM stage.
 
     Returns a dict with the ranked ``candidates`` plus LLM usage metrics, so
     the caller can fold token counts and cost into the overall response.
 
-    The function is *cheap* by default — ``CAUSE_RANK_MODEL`` defaults to
-    ``qwen2.5:3b`` (free, local via Ollama). Override with any OpenAI model
-    in ``.env`` if you prefer cloud quality.
+    The model defaults to the router's ``analyze`` task (cheap/fast under
+    every backend). Override surgically with an explicit ``model=`` arg.
     """
+    if model is None:
+        model = task_model("analyze")
     base_metrics: Dict[str, Any] = {
         "candidates": [],
         "prompt_tokens": 0,
@@ -232,7 +236,9 @@ def rank_causes(
 
     try:
         llm_result = call_llm_with_metrics(
-            system_prompt=CAUSE_RANK_SYSTEM_PROMPT.format(
+            system_prompt=get_prompt(
+                domain, "cause_rank_system", CAUSE_RANK_SYSTEM_PROMPT,
+            ).format(
                 top_k=top_k,
                 taxonomy_clause=_taxonomy_clause(active_taxonomy),
             ),

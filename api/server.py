@@ -57,6 +57,7 @@ from config import (  # noqa: E402
 )
 from core.audit_log import get_default_log  # noqa: E402
 from core.auth_store import UserRecord  # noqa: E402
+from core.domain_prompts import all_schema_statuses, reload_schemas, schema_status  # noqa: E402
 from core.document_acl import (  # noqa: E402
     policy_snapshot,
     with_user_classifications,
@@ -144,6 +145,27 @@ def _get_session_lock(domain: str, session_id: str) -> threading.Lock:
 
 @app.on_event("startup")
 def _bootstrap() -> None:
+    # Validate every domain's schema first — surfaces typos and bad
+    # YAML loud and early so they don't appear later as silent wrong
+    # behaviour. Validation failure does NOT block startup; the affected
+    # domain still loads with whatever fallback the loader resolves to,
+    # and the error is exposed via /api/domains so the UI can flag it.
+    statuses = all_schema_statuses(tuple(DOMAINS))
+    for d, st in statuses.items():
+        if st.errors:
+            logger.error(
+                "schema validation FAILED for domain=%r: %d error(s); %d warning(s). "
+                "Errors: %s",
+                d, len(st.errors), len(st.warnings), "; ".join(st.errors),
+            )
+        elif st.warnings:
+            logger.warning(
+                "schema validation OK for domain=%r with %d warning(s): %s",
+                d, len(st.warnings), "; ".join(st.warnings),
+            )
+        else:
+            logger.info("schema validation OK for domain=%r", d)
+
     try:
         for domain in DOMAINS:
             logger.info("Building / loading ManufacturingPipeline [%s]…", domain)
@@ -204,6 +226,31 @@ def health() -> Dict:
     }
 
 
+class LlmBackendRequest(BaseModel):
+    backend: str = Field(..., description="One of 'local' | 'cloud' | 'auto' (or '' to clear).")
+
+
+@app.get("/api/llm/backend")
+def llm_backend_status() -> Dict:
+    """Snapshot of the active LLM backend + per-task model resolution.
+
+    Drives the Streamlit sidebar dropdown and the Next.js header pill.
+    """
+    from core.llm_router import status
+    return status()
+
+
+@app.post("/api/llm/backend")
+def llm_backend_set(req: LlmBackendRequest) -> Dict:
+    """Flip the process-wide LLM backend at runtime. Returns the new status."""
+    from core.llm_router import set_active_backend, status
+    try:
+        set_active_backend(req.backend)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    return status()
+
+
 @app.get("/api/domains")
 def domains() -> Dict:
     """Auto-discovered domain catalog.
@@ -212,21 +259,43 @@ def domains() -> Dict:
     Next.js header switcher use. Source of truth: ``config.DOMAIN_DISPLAY``,
     which itself is derived from ``schemas/*.yaml`` at startup.
     """
+    def _entry(d: str) -> Dict[str, Any]:
+        st = schema_status(d)
+        return {
+            "id": d,
+            "label": DOMAIN_DISPLAY[d]["label"],
+            "emoji": DOMAIN_DISPLAY[d]["emoji"],
+            "color": DOMAIN_DISPLAY[d]["color"],
+            "placeholder": DOMAIN_PLACEHOLDER.get(d, ""),
+            "empty_state": DOMAIN_EMPTY_STATE.get(d, {}),
+            "examples": DOMAIN_EXAMPLES.get(d, []),
+            "loaded": d in _Singleton.pipes,
+            "schema_status": {
+                "ok": st.ok,
+                "errors": list(st.errors),
+                "warnings": list(st.warnings),
+            },
+        }
+
     return {
         "default": DEFAULT_DOMAIN,
-        "domains": [
-            {
-                "id": d,
-                "label": DOMAIN_DISPLAY[d]["label"],
-                "emoji": DOMAIN_DISPLAY[d]["emoji"],
-                "color": DOMAIN_DISPLAY[d]["color"],
-                "placeholder": DOMAIN_PLACEHOLDER.get(d, ""),
-                "empty_state": DOMAIN_EMPTY_STATE.get(d, {}),
-                "examples": DOMAIN_EXAMPLES.get(d, []),
-                "loaded": d in _Singleton.pipes,
-            }
-            for d in DOMAINS
-        ],
+        "domains": [_entry(d) for d in DOMAINS],
+    }
+
+
+@app.post("/api/domains/reload")
+def domains_reload() -> Dict:
+    """Drop the schema cache and re-validate every domain on disk.
+
+    Use after editing a ``schemas/*.yaml`` so prompts / safety keywords /
+    clarifier overrides / procedure-gate config take effect without a
+    full API restart. The KG snapshots and vector stores are NOT
+    rebuilt — for that, restart the API.
+    """
+    statuses = reload_schemas(tuple(DOMAINS))
+    return {
+        "reloaded": list(DOMAINS),
+        "statuses": {d: st.to_dict() for d, st in statuses.items()},
     }
 
 
@@ -316,6 +385,10 @@ class OnboardAnalyzeRequest(BaseModel):
     domain_hint: str = Field(default="", description="Optional human label.")
     user_prefs: Dict[str, Any] = Field(default_factory=dict)
     prior_qa: List[Dict[str, str]] = Field(default_factory=list)
+    force_generate: bool = Field(
+        default=False,
+        description="When true, instruct the agent to produce a YAML even when ambiguity remains.",
+    )
 
 
 class OnboardSaveRequest(BaseModel):
@@ -336,6 +409,7 @@ def onboard_analyze(req: OnboardAnalyzeRequest) -> Dict:
             domain_hint=req.domain_hint,
             user_prefs=req.user_prefs,
             prior_qa=req.prior_qa,
+            force_generate=req.force_generate,
         )
     except ValueError as e:
         raise HTTPException(400, detail=str(e))

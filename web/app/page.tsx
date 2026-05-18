@@ -22,6 +22,7 @@ import {
   type DomainCatalog,
   type DomainCatalogEntry,
   type HealthResponse,
+  type LlmBackendStatus,
   type StatsResponse,
 } from "@/lib/api";
 
@@ -47,6 +48,7 @@ export default function ChatPage() {
   const [activeDomain, setActiveDomain] = useState<Domain>(DEFAULT_DOMAIN);
   const [domainCatalog, setDomainCatalog] =
     useState<DomainCatalog>(FALLBACK_CATALOG);
+  const [llmBackend, setLlmBackend] = useState<LlmBackendStatus | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [awaitingPrompt, setAwaitingPrompt] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -162,13 +164,33 @@ export default function ChatPage() {
       .catch(() => {
         /* keep FALLBACK_CATALOG */
       });
+    // Same one-shot pattern for the LLM backend snapshot.
+    api.llmBackendStatus().then((s) => {
+      if (!cancelled) setLlmBackend(s);
+    }).catch(() => {
+      /* keep null — pill renders a stub */
+    });
     return () => {
       cancelled = true;
     };
-    // Run once on mount — the catalog effectively never changes during a
-    // session because /api/domains derives from on-disk schemas/.
+    // Run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Flip the LLM backend at runtime — POSTs to FastAPI, which mutates the
+  // process-wide state. Next chat / diagnostic / onboarding call uses the
+  // new backend automatically; no page reload needed.
+  const handleLlmBackendChange = useCallback(
+    async (next: "auto" | "local" | "cloud") => {
+      try {
+        const updated = await api.setLlmBackend(next);
+        setLlmBackend(updated);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [],
+  );
 
   // Persist domain selection.
   useEffect(() => {
@@ -397,6 +419,10 @@ export default function ChatPage() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <LlmBackendPill
+              status={llmBackend}
+              onChange={handleLlmBackendChange}
+            />
             <DomainSwitcher
               active={activeDomain}
               catalog={domainCatalog}
@@ -992,5 +1018,60 @@ function TroubleshootingPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ── LLM backend pill ──────────────────────────────────────────────────────
+// Small chip in the header that shows the active LLM backend (☁️ cloud /
+// 💻 local) with the answer-task model under it. Click cycles auto →
+// local → cloud → auto. Disabled with a tooltip if the cloud key is
+// missing.
+function LlmBackendPill({
+  status,
+  onChange,
+}: {
+  status: LlmBackendStatus | null;
+  onChange: (next: "auto" | "local" | "cloud") => void;
+}) {
+  if (!status) {
+    return (
+      <div className="hidden items-center gap-2 rounded-full border border-ink-900/10 bg-white px-3 py-1 text-[11px] text-ink-500 shadow-soft md:flex">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+        LLM…
+      </div>
+    );
+  }
+  const isCloud = status.active === "cloud";
+  const color = isCloud ? "#0EA5E9" : "#10B981";
+  const emoji = isCloud ? "☁️" : "💻";
+  const label = isCloud ? "Cloud" : "Local";
+  const cycle: Record<"auto" | "local" | "cloud", "auto" | "local" | "cloud"> = {
+    auto: "local",
+    local: status.openai_key_valid ? "cloud" : "auto",
+    cloud: "auto",
+  };
+  const next = cycle[status.raw];
+  const disabled = !status.openai_key_valid && next === "cloud";
+  return (
+    <button
+      onClick={() => !disabled && onChange(next)}
+      disabled={disabled}
+      className="hidden items-center gap-1.5 rounded-full border bg-white px-3 py-1 text-[11px] font-semibold shadow-soft transition hover:bg-cream-50 disabled:cursor-not-allowed disabled:opacity-60 md:flex"
+      style={{ color, borderColor: `${color}55` }}
+      title={
+        disabled
+          ? "Cloud requires a valid OPENAI_API_KEY"
+          : `LLM: ${status.raw} (resolves to ${status.active}). ` +
+            `Click to switch to ${next}. ` +
+            `Answer model: ${status.per_task.answer}.`
+      }
+      aria-label={`LLM backend: ${status.active}, click to cycle`}
+    >
+      <span>{emoji}</span>
+      <span>{label}</span>
+      <span className="hidden text-ink-500 lg:inline">
+        ·{" "}<code className="text-[10px]">{status.per_task.answer}</code>
+      </span>
+    </button>
   );
 }

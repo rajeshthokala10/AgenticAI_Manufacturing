@@ -189,34 +189,23 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── Models / credentials ────────────────────────────────────────────
+    # ── Credentials + non-LLM models ────────────────────────────────────
     openai_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
-    # bge-small-en-v1.5 is the new default — same dim as MiniLM (384) but
-    # consistently outperforms it on industrial / technical retrieval.
+    ollama_base_url: str = "http://localhost:11434/v1"
+    # bge-small-en-v1.5 — same dim as MiniLM (384) but better on technical
+    # retrieval. The sentence-transformers model is a separate concern
+    # from chat completions; not routed by core/llm_router.
     embedding_model: str = "BAAI/bge-small-en-v1.5"
 
-    # ── Tiered model routing (Ollama + OpenAI) ──────────────────────────
-    ollama_base_url: str = "http://localhost:11434/v1"
-    answer_model: str = "gpt-4o"
-    critic_model: str = "qwen2.5:3b"
-    retry_model: str = "gpt-4o"
-    classify_model: str = "qwen2.5:3b"
-    direct_llm_model: str = "gpt-4o-mini"
-    classical_rag_model: str = "gpt-4o-mini"
+    # ── LLM model selection ─────────────────────────────────────────────
+    # NOTE: per-task model env vars (ANSWER_MODEL, RETRY_MODEL, CRITIC_MODEL,
+    # CLASSIFY_MODEL, CAUSE_RANK_MODEL, TOOL_PLANNER_MODEL, PROCEDURE_MODEL,
+    # ONBOARDING_MODEL, DIRECT_LLM_MODEL, CLASSICAL_RAG_MODEL, LLM_MODEL)
+    # were dropped in favour of a single switch: ``LLM_BACKEND=local|cloud|auto``.
+    # See ``core/llm_router.py``. For surgical per-task pinning, use the
+    # canonical name ``LLM_<TASK>_MODEL`` (e.g. ``LLM_CRITIC_MODEL=gpt-4o-mini``).
 
-    # ── Optional dedicated cause-ranking LLM ────────────────────────────
-    cause_rank_model: str = "qwen2.5:3b"
     cause_rank_top_k: int = 5
-
-    # ── Schema-onboarding agent (Streamlit "Onboard Domain" tab) ────────
-    # Authoring a fresh ``schemas/<domain>.yaml`` is a high-stakes one-shot
-    # task — closed vocabularies + regex id_patterns + KG edge declarations
-    # all need to be coherent. qwen2.5:3b can't do it reliably. Defaults to
-    # ``answer_model`` so it Just Works on cloud setups; override on local-
-    # only deployments by pointing this at a larger Ollama model
-    # (e.g. ``qwen2.5:14b``) or at a different OpenAI model.
-    onboarding_model: str = ""
 
     # Optional fixed cause taxonomy (piston-style). Comma-separated list of
     # canonical cause names. When non-empty, the cause-ranker drops any
@@ -255,7 +244,6 @@ class Settings(BaseSettings):
 
     # ── Tool-calling ────────────────────────────────────────────────────
     use_tools: bool = False
-    tool_planner_model: str = "qwen2.5:3b"
     tool_planner_use_llm: bool = True
 
     # ── Orchestration ───────────────────────────────────────────────────
@@ -267,7 +255,15 @@ class Settings(BaseSettings):
     # structured procedure { steps: [{step, action, citations}] } via a
     # dedicated LLM call. Renders as Markdown for legacy answer surfaces.
     use_procedure_drafting: bool = False
-    procedure_model: str = "gpt-4o"
+
+    # ── Advanced PDF parser ─────────────────────────────────────────────
+    # Opt-in route through ``doc_pipeline/advanced_parser`` (the vendored
+    # production-grade pipeline) for .pdf files. Handles scanned pages
+    # (OCR), multi-column layouts, cross-page tables, headers/footers,
+    # watermarks, redactions, charts, embedded attachments, and per-page
+    # fault tolerance. Other file types (.txt / .xlsx) keep the existing
+    # parser regardless of this flag.
+    use_advanced_parser: bool = False
 
     # ── HITL approval gate ──────────────────────────────────────────────
     use_hitl: bool = False
@@ -321,19 +317,17 @@ settings = Settings()
 # working without any module changes elsewhere.
 
 OPENAI_API_KEY: str = settings.openai_api_key
-LLM_MODEL: str = settings.llm_model
 EMBEDDING_MODEL: str = settings.embedding_model
-
 OLLAMA_BASE_URL: str = settings.ollama_base_url
-ANSWER_MODEL: str = settings.answer_model
-ONBOARDING_MODEL: str = settings.onboarding_model.strip() or settings.answer_model
-CRITIC_MODEL: str = settings.critic_model
-RETRY_MODEL: str = settings.retry_model
-CLASSIFY_MODEL: str = settings.classify_model
-DIRECT_LLM_MODEL: str = settings.direct_llm_model
-CLASSICAL_RAG_MODEL: str = settings.classical_rag_model
 
-CAUSE_RANK_MODEL: str = settings.cause_rank_model
+# The 11 model constants below (LLM_MODEL, ANSWER_MODEL, CRITIC_MODEL, …)
+# used to be static reads of ``settings.<field>``. They are now **dynamic**
+# via the module-level ``__getattr__`` at the bottom of this file — each
+# access delegates to ``core.llm_router.task_model(<role>)`` so that
+# flipping the active LLM backend at runtime instantly retargets every
+# call site. The legacy per-task env vars (ANSWER_MODEL, CRITIC_MODEL, …)
+# still win when explicitly set in ``.env`` — see ``_LEGACY_MODEL_ENV``.
+
 CAUSE_RANK_TOP_K: int = settings.cause_rank_top_k
 CAUSE_TAXONOMY: Tuple[str, ...] = tuple(
     c.strip() for c in settings.cause_taxonomy.split(",") if c.strip()
@@ -365,14 +359,13 @@ GUARDRAILS_MIN_CITATIONS: int = settings.guardrails_min_citations
 GUARDRAILS_BLOCK_UNSAFE: bool = settings.guardrails_block_unsafe
 
 USE_TOOLS: bool = settings.use_tools
-TOOL_PLANNER_MODEL: str = settings.tool_planner_model
 TOOL_PLANNER_USE_LLM: bool = settings.tool_planner_use_llm
 
 USE_LANGGRAPH: bool = settings.use_langgraph
 USE_CAUSE_RANKING: bool = settings.use_cause_ranking
 
 USE_PROCEDURE_DRAFTING: bool = settings.use_procedure_drafting
-PROCEDURE_MODEL: str = settings.procedure_model
+USE_ADVANCED_PARSER: bool = settings.use_advanced_parser
 
 USE_HITL: bool = settings.use_hitl
 HITL_RISK_THRESHOLD: float = settings.hitl_risk_threshold
@@ -489,7 +482,104 @@ def llm_available() -> bool:
     if _openai_key_valid():
         return True
     # If the user has wired the answer surface to a local model, accept it
-    # as long as Ollama is actually responding.
-    if _is_local_model(ANSWER_MODEL) and _ollama_reachable():
+    # as long as Ollama is actually responding. ``ANSWER_MODEL`` is resolved
+    # via the module-level ``__getattr__`` below — explicit qualifier so the
+    # name lookup goes through it.
+    answer_model = __getattr__("ANSWER_MODEL")
+    if _is_local_model(answer_model) and _ollama_reachable():
         return True
     return False
+
+
+# ─── Dynamic model constants (delegate to the LLM router) ───────────────────
+# Every ``from config import ANSWER_MODEL`` (and similar) used to capture a
+# static value at import time. Switching the backend at runtime would not
+# propagate. The module-level ``__getattr__`` below makes these dynamic —
+# each attribute access re-resolves via ``core.llm_router.task_model()``.
+#
+# To pin one task to a specific model (regardless of the active backend),
+# set ``LLM_<TASK>_MODEL`` in ``.env`` — e.g. ``LLM_CRITIC_MODEL=gpt-4o-mini``.
+# That's the **one** surgical-pin mechanism; the old per-task ``.env`` lines
+# (``ANSWER_MODEL=...`` etc.) have been removed.
+
+# Maps the ALL_CAPS constant name → router task role.
+_MODEL_TASK_MAP = {
+    "ANSWER_MODEL":        "answer",
+    "RETRY_MODEL":         "answer",
+    "LLM_MODEL":           "answer",
+    "PROCEDURE_MODEL":     "procedure",
+    "CRITIC_MODEL":        "critic",
+    "CLASSIFY_MODEL":      "analyze",
+    "CAUSE_RANK_MODEL":    "analyze",
+    "DIRECT_LLM_MODEL":    "analyze",
+    "CLASSICAL_RAG_MODEL": "analyze",
+    "TOOL_PLANNER_MODEL":  "tool",
+    "ONBOARDING_MODEL":    "onboarding",
+}
+
+
+def __getattr__(name: str) -> str:
+    """Module-level lazy resolution for the LLM model constants — every
+    access re-runs through ``core.llm_router.task_model()``.
+
+    Only fires when ``name`` is not in the module's namespace — i.e. only
+    for attributes deliberately removed from the static block above.
+    """
+    if name in _MODEL_TASK_MAP:
+        try:
+            from core.llm_router import task_model
+            return task_model(_MODEL_TASK_MAP[name])
+        except Exception:  # pragma: no cover — keep import healthy if router fails
+            return ""
+    raise AttributeError(f"module 'config' has no attribute {name!r}")
+
+
+# ─── Deprecation warning for legacy per-task .env model vars ────────────────
+# All LLM model selection now lives in ``core/llm_router.py`` (the PROFILES
+# table). Anyone with a pre-router ``.env`` may still have lines like
+# ``ANSWER_MODEL=...`` set — surface a one-time warning so they know those
+# lines do nothing.
+
+def _warn_about_legacy_env_vars() -> None:
+    import os
+    legacy = [
+        # Old per-task model vars.
+        "ANSWER_MODEL", "RETRY_MODEL", "PROCEDURE_MODEL", "CRITIC_MODEL",
+        "CLASSIFY_MODEL", "CAUSE_RANK_MODEL", "TOOL_PLANNER_MODEL",
+        "ONBOARDING_MODEL", "DIRECT_LLM_MODEL", "CLASSICAL_RAG_MODEL",
+        "LLM_MODEL",
+        # Backend / per-cell env vars never shipped publicly — flagged so an
+        # accidental setting is loud rather than silent.
+        "LLM_BACKEND",
+        "LLM_ANSWER_MODEL", "LLM_PROCEDURE_MODEL", "LLM_CRITIC_MODEL",
+        "LLM_ANALYZE_MODEL", "LLM_TOOL_MODEL", "LLM_ONBOARDING_MODEL",
+    ]
+    # Check the live shell env and the .env file (pydantic-settings reads
+    # the file without exporting to os.environ).
+    sources: dict = {}
+    for k in legacy:
+        v = os.environ.get(k)
+        if v:
+            sources[k] = v
+    env_file = BASE_DIR / ".env"
+    if env_file.exists():
+        try:
+            from dotenv import dotenv_values
+            for k, v in dotenv_values(env_file).items():
+                if k in legacy and v and k not in sources:
+                    sources[k] = v
+        except Exception:
+            pass
+    if sources:
+        import logging
+        logging.getLogger("config").warning(
+            "Legacy LLM env vars detected in .env (%s) — these are ignored. "
+            "LLM model selection now lives in core/llm_router.py PROFILES. "
+            "Edit that table to change model picks; use the Streamlit/Next.js "
+            "UI toggle to switch backends at runtime. Safe to delete these "
+            "lines from .env.",
+            ", ".join(sorted(sources)),
+        )
+
+
+_warn_about_legacy_env_vars()

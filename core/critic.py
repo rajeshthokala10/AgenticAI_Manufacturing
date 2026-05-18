@@ -1,8 +1,9 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
-from config import CRITIC_MODEL
+from core.domain_prompts import get_prompt
 from core.llm_client import call_llm
+from core.llm_router import task_model
 
 
 CRITIC_SYSTEM_PROMPT = """You are a strict quality critic for manufacturing diagnostic answers.
@@ -27,6 +28,7 @@ def critic_evaluate(
     answer: str,
     evidence_chunks: List[Dict],
     attempt: int = 1,
+    domain: Optional[str] = None,
 ) -> Dict:
     evidence_text = "\n\n".join([
         f"[Source: {c.get('metadata', {}).get('source', 'unknown')} | "
@@ -46,11 +48,11 @@ Evaluate whether this answer is fully grounded in the evidence chunks provided.
 Any claim not supported by the evidence is a hallucination."""
 
     response = call_llm(
-        system_prompt=CRITIC_SYSTEM_PROMPT,
+        system_prompt=get_prompt(domain, "critic_rules", CRITIC_SYSTEM_PROMPT),
         user_prompt=user_prompt,
         temperature=0.1,
         max_tokens=500,
-        model=CRITIC_MODEL,
+        model=task_model("critic"),
     )
 
     return _parse_critic_response(response, attempt)

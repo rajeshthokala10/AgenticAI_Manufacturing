@@ -36,10 +36,12 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from config import ONBOARDING_MODEL, BASE_DIR, llm_available
+from config import BASE_DIR, llm_available
 from core.kg.extractors.keyword import KeywordExtractor
 from core.kg.schema import load_schema
 from core.llm_client import call_llm
+from core.llm_router import task_model
+from core.schema_validator import validate_schema as validate_new_blocks
 
 logger = logging.getLogger("core.onboarding_agent")
 
@@ -47,29 +49,268 @@ logger = logging.getLogger("core.onboarding_agent")
 # ─── Constants ──────────────────────────────────────────────────────────────
 
 MIN_ROUND_TRIP_FRACTION = 0.30   # Gate 2 threshold
+MIN_VOCAB_GROUNDING_FRACTION = 0.40  # Gate 5: closed-vocab coverage in corpus
 MAX_DOC_CHARS_PER_SAMPLE = 12_000  # truncate large docs in the prompt
+MAX_REPAIR_ATTEMPTS = 2
 DOMAIN_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-# ─── The advanced prompt ────────────────────────────────────────────────────
+# ─── Two-stage pipeline ─────────────────────────────────────────────────────
 #
-# Authored carefully — the most important blocks are EXTRACTION_RULES and
-# QUALITY_CHECKLIST because they're what stop the model from inventing
-# entity types or emitting unanchored regexes. The gold-standard schema is
-# inlined verbatim so the model has a concrete shape to imitate.
+# Single-shot drafting + a 300-line inlined gold-standard caused the agent
+# to mechanically copy ``schemas/manufacturing.yaml`` regardless of corpus
+# shape — the EV-manufacturing trial shipped fabricated equipment IDs and
+# a Cause vocabulary lifted verbatim from the maintenance domain.
+#
+# The agent now runs:
+#
+#   Stage A   _characterize_corpus()  →  archetype + candidate terms with
+#                                         evidence quotes from the docs
+#   Stage B   _draft_schema()         →  YAML adapted to the archetype, with
+#                                         only grounded vocab/IDs
+#   Stage C   _validate_schema()      →  Gates 1-7, including programmatic
+#                                         grounding checks against the corpus
+#   Stage D   _repair_schema()        →  Re-prompt with the specific gate
+#                                         errors when validation fails
+#                                         (≤ MAX_REPAIR_ATTEMPTS)
+#
+# Stage A keeps Stage B from defaulting to the manufacturing skeleton when
+# the corpus is, say, a clinical reference or a process tutorial.
 
 _GOLD_STANDARD_SCHEMA_PATH = BASE_DIR / "schemas" / "manufacturing.yaml"
 
 
 def _load_gold_standard() -> str:
-    """Inline the manufacturing schema as a worked example. Empty if missing."""
+    """Inline the manufacturing schema. Used as a *reference* (not a
+    template to imitate) and ONLY when archetype == maintenance_manual."""
     try:
         return _GOLD_STANDARD_SCHEMA_PATH.read_text()
     except FileNotFoundError:
         return ""
 
 
-SYSTEM_PROMPT = textwrap.dedent("""\
+# Archetype labels Stage A can emit. Stage B uses these to pick a skeleton
+# and to bias the entity-type taxonomy. ``general_technical`` is the safe
+# fallback when none of the others clearly fit.
+ARCHETYPES = (
+    "maintenance_manual",      # asset-centric: equipment + alarms + spare parts
+    "process_tutorial",        # workflow-centric: steps + materials + defects
+    "regulatory_compliance",   # rule-centric: requirements + obligations + audits
+    "clinical_reference",      # patient-centric: conditions + treatments + dosages
+    "financial_report",        # metric-centric: KPIs + accounts + periods
+    "legal_document",          # clause-centric: parties + obligations + jurisdictions
+    "design_specification",    # spec-centric: components + requirements + tolerances
+    "general_technical",       # fallback when none of the above clearly fit
+)
+
+# Compressed skeletons (block names + intent, NOT full YAML) — short enough
+# that the model isn't tempted to copy them verbatim. The drafter receives
+# ONE skeleton, picked by Stage A's archetype label.
+ARCHETYPE_SKELETONS: Dict[str, str] = {
+    "maintenance_manual": textwrap.dedent("""\
+        Typical entity types: Equipment (id_pattern), Component (closed vocab),
+        Alarm (id_pattern), FailureMode (id_pattern), Symptom (open),
+        Cause (closed vocab), Procedure (open), SparePart (id_pattern),
+        Specification (open).
+        Typical edges: HAS_COMPONENT, TRIGGERS_ALARM, CAUSES_FAILURE,
+        HAS_SYMPTOM, HAS_CAUSE, RESOLVED_BY, REQUIRES_PART.
+        Typical intents: troubleshoot, procedure, specification, alarm, inventory.
+        Safety hazards usually include LOTO, arc flash, confined space.
+        """).strip(),
+
+    "process_tutorial": textwrap.dedent("""\
+        Typical entity types: ProcessStep (closed vocab of named stages),
+        Material (closed vocab of inputs), Equipment (process equipment,
+        often no asset-ID), Defect (closed vocab of quality failures),
+        Parameter (open — viscosity, peel strength, etc.), Procedure (open).
+        Typical edges: STEP_FOLLOWS (ProcessStep → ProcessStep),
+        USES_MATERIAL (ProcessStep → Material), CAUSES_DEFECT
+        (ProcessStep → Defect), MEASURES_PARAMETER (ProcessStep → Parameter).
+        Typical intents: process_lookup, defect_diagnosis, parameter_lookup,
+        material_specification, general.
+        DO NOT declare Equipment with an asset-tag id_pattern unless the
+        docs actually contain plant-asset IDs — process tutorials usually
+        don't. DO NOT copy maintenance-domain Cause vocabularies (bearing
+        wear, cavitation, etc.) — they will not match the corpus.
+        """).strip(),
+
+    "regulatory_compliance": textwrap.dedent("""\
+        Typical entity types: Regulation (id_pattern for clause refs like
+        "21 CFR 820.30"), Requirement (open), Obligation (open), Party
+        (closed vocab of regulated entities), Audit (open), Penalty (open).
+        Typical edges: REQUIRES, APPLIES_TO, ENFORCED_BY, VIOLATES, AUDITED_BY.
+        DO NOT carry Equipment / Alarm / SparePart from the maintenance template.
+        """).strip(),
+
+    "clinical_reference": textwrap.dedent("""\
+        Typical entity types: Condition (closed vocab of disease/syndrome
+        names), Symptom (open), Treatment (open), Medication (closed vocab),
+        Dosage (open with units), Contraindication (open), Procedure (open).
+        Typical edges: PRESENTS_WITH, TREATED_BY, CONTRAINDICATED_WITH,
+        DOSED_AT, FOLLOWS_PROCEDURE.
+        Safety hazards: anaphylaxis, overdose, drug-interaction, sepsis.
+        DO NOT carry Equipment / Alarm / SparePart from the maintenance template.
+        """).strip(),
+
+    "financial_report": textwrap.dedent("""\
+        Typical entity types: Metric (closed vocab — revenue, EBITDA, OEE,
+        churn, etc.), Account (id_pattern for ledger codes), Period
+        (id_pattern like FY2025Q1), Segment (closed vocab), Trend (open).
+        Typical edges: REPORTED_BY, OVER_PERIOD, BELONGS_TO_SEGMENT,
+        COMPARED_TO.
+        Typical intents: lookup, trend, comparison, period_over_period.
+        DO NOT carry safety keywords (LOTO, arc flash) — irrelevant.
+        """).strip(),
+
+    "legal_document": textwrap.dedent("""\
+        Typical entity types: Clause (id_pattern), Party (closed vocab),
+        Obligation (open), Jurisdiction (closed vocab), Definition (open),
+        Remedy (open).
+        Typical edges: BINDS, DEFINES, GOVERNED_BY, AMENDS, VIOLATES.
+        DO NOT carry Equipment / Alarm / Cause from the maintenance template.
+        """).strip(),
+
+    "design_specification": textwrap.dedent("""\
+        Typical entity types: Component (closed vocab), Requirement (open
+        or id_pattern for REQ-### style refs), Tolerance (open with units),
+        Interface (open), Standard (id_pattern for ISO/IEEE refs).
+        Typical edges: HAS_COMPONENT, SATISFIES_REQUIREMENT, CONFORMS_TO,
+        INTERFACES_WITH.
+        Use Procedure only if the docs contain step-by-step instructions.
+        """).strip(),
+
+    "general_technical": textwrap.dedent("""\
+        No fixed skeleton — propose entity types that match the actual
+        nouns and id-shaped tokens in the corpus. AVOID adopting the
+        maintenance template (Equipment / Symptom / Cause / RESOLVED_BY)
+        unless the docs are obviously about maintenance / troubleshooting.
+        """).strip(),
+}
+
+
+# ─── Stage A — corpus characterizer ─────────────────────────────────────────
+
+SYSTEM_PROMPT_CHARACTERIZE = textwrap.dedent("""\
+    You are a **Corpus Analyst** preparing a knowledge-graph schema brief.
+
+    Given a handful of sample documents from a single domain — plus a
+    pre-mined list of candidate noun-phrase clusters extracted
+    deterministically from the FULL corpus — your job is to:
+
+      (1) determine WHAT KIND of corpus this is (the archetype), and
+      (2) LABEL each mined cluster: decide if it is signal or noise and,
+          if signal, which entity type it belongs to.
+
+    You are NOT extracting vocabulary from raw text; the deterministic
+    miner has already done that. You are also NOT writing a schema; a
+    downstream agent will draft it using your brief.
+
+    ## Archetypes (pick exactly one)
+
+      maintenance_manual       asset-centric — plant-floor equipment,
+                                troubleshooting, alarms, spare parts
+      process_tutorial         workflow-centric — how something is
+                                manufactured / produced step by step
+      regulatory_compliance    rule-centric — regulations, requirements,
+                                audits, obligations, penalties
+      clinical_reference       patient-centric — conditions, symptoms,
+                                treatments, medications, dosages
+      financial_report         metric-centric — KPIs, accounts, periods,
+                                segments
+      legal_document           clause-centric — parties, clauses,
+                                obligations, jurisdictions
+      design_specification     spec-centric — components, requirements,
+                                tolerances, standards
+      general_technical        fallback when none of the above clearly fit
+
+    Bias rule: when in doubt between maintenance_manual and process_tutorial,
+    pick process_tutorial — process tutorials look superficially like
+    maintenance manuals (they mention equipment) but the focus is on HOW
+    a product is built, not on diagnosing or fixing assets. Maintenance
+    manuals contain asset tags, alarm codes, fault codes, work orders;
+    process tutorials contain step sequences, materials, parameters, defects.
+
+    ## Grounding discipline
+
+    Every term you assign to ``candidate_vocabulary`` MUST be a cluster
+    label or a member from the pre-mined ``candidate_clusters`` list in
+    the user message. You may DROP clusters you judge to be noise
+    (table-header residue, author names, generic connectors) but you
+    may NOT ADD terms not in the list.
+
+    For each cluster the miner provides:
+
+      - ``label``         the representative phrase
+      - ``members``       near-synonyms (singular/plural, hyphen variants)
+      - ``frequency``     total mention count across the corpus
+      - ``doc_coverage``  how many docs mention it (higher = stronger signal)
+      - ``sample_quote``  one sentence from the docs showing usage
+
+    Heuristics for labelling:
+
+      - High doc_coverage (≥ all docs) AND high frequency → almost
+        always signal; assign to an entity type.
+      - Single-doc clusters with low frequency → usually noise unless
+        the surface form is clearly domain-specific.
+      - Phrases like "form data", "table on", "excerpt", "quality
+        impacts" → noise; the miner couldn't strip every table-header
+        artefact.
+      - Author / affiliation phrases → noise.
+      - Phrases that are too generic on their own ("material", "process",
+        "quality", "design") → either drop, or only keep if they're
+        modified ("temperature profile", "process step", "winding scheme").
+
+    ## Coverage target — IMPORTANT
+
+    Aim to assign **at least 5–10 clusters per entity type** when the
+    miner provides them. Conservative pruning (only labelling the top 2
+    obvious ones) is the WRONG default — vocabulary breadth is what
+    drives downstream extraction recall. If you can plausibly assign a
+    cluster to an entity type, DO assign it. The downstream gates and
+    HITL review will catch borderline calls. Err on inclusion.
+
+    A good Stage A response uses **most** of the high-doc-coverage
+    clusters (≥ 2 docs) and only drops the obvious table-residue or
+    author boilerplate. A bad Stage A response cherry-picks 2 terms
+    per type and discards everything else.
+
+    ## Output — STRICT JSON ONLY, no markdown fences
+
+    {
+      "archetype": "<one of the labels above>",
+      "archetype_confidence": <float 0.0-1.0>,
+      "archetype_rationale": "<1-2 sentence justification citing terms
+                              from the docs>",
+      "summary": "<2-3 sentence corpus description>",
+      "primary_actors": ["<noun>", ...],
+      "primary_workflows": ["<verb-phrase>", ...],
+      "recommended_entity_types": ["<PascalCase>", ...],
+      "candidate_vocabulary": {
+        "<EntityType>": [
+          {"term": "<lowercase phrase>",
+           "evidence_quote": "<verbatim from doc>",
+           "doc_index": <0-based int>}
+        ]
+      },
+      "representative_ids": [
+        {"id": "<verbatim id>",
+         "evidence_quote": "<verbatim from doc>",
+         "doc_index": <int>,
+         "suggested_id_pattern": "<anchored regex>"}
+      ],
+      "domain_hazards": ["<short safety phrase>", ...],
+      "domain_intents": ["<intent label>", ...]
+    }
+
+    representative_ids should be EMPTY when the corpus contains no
+    asset-tag-style identifiers (common for process tutorials, regulatory
+    docs, clinical references). DO NOT invent placeholder IDs.
+    """).strip()
+
+
+# ─── Stage B — schema drafter ───────────────────────────────────────────────
+
+SYSTEM_PROMPT_DRAFT = textwrap.dedent("""\
     You are a **Knowledge-Graph Schema Architect** for the Hybrid GraphRAG
     diagnostic copilot. Your job: given a domain id and a handful of sample
     documents, produce a complete, working ``schemas/<domain>.yaml`` that
@@ -97,7 +338,8 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     with low confidence. ID-pattern types (Equipment, Alarm, SparePart)
     are regex-extracted by the adapter from chunk text.
 
-    ## Standard entity-type taxonomy (use these names when they fit)
+    ## Reference taxonomy (maintenance-domain — use ONLY when archetype
+    ## is ``maintenance_manual``; otherwise use the archetype skeleton)
 
       Equipment       a tagged asset instance (regex id_pattern)
       Component       a sub-component of equipment (closed vocab)
@@ -173,6 +415,72 @@ SYSTEM_PROMPT = textwrap.dedent("""\
       clarifier.equipment_patterns  extra regex families for the clarifier
       clarifier.metric_names    KPIs / measurements (e.g. CHT, OEE)
 
+    ## Per-domain runtime overrides (HIGH IMPACT — strongly preferred)
+
+    A schema that omits these blocks falls back to the manufacturing
+    defaults. That is benign for manufacturing-adjacent domains but
+    nonsensical for medical / legal / aviation / financial domains where
+    the manufacturing persona, HITL keywords, and intent vocabulary
+    would confabulate. AUTHOR these unless the new domain is itself
+    plant-floor / industrial.
+
+    prompts:
+      persona:           one-line label (e.g. "aviation maintenance copilot")
+      answer_system:     system prompt for the free-form answer LLM
+      retry_system:      MUST contain the literal "{critic_feedback}"
+                         placeholder (it's substituted at runtime)
+      critic_rules:      criteria the quality critic uses to grade answers
+      procedure_system:  drafter persona — name the safety preconditions
+                         appropriate to the domain (e.g. LOTO for plants,
+                         mag-ground/prop-clear for aviation, sterile-field
+                         for medical)
+      cause_rank_system: MUST contain "{top_k}" and "{taxonomy_clause}"
+                         placeholders
+      classify_system:   intent classifier prompt — list the categories
+                         relevant to the domain
+      risk_grader_system / risk_grader_user: tier-2 HITL risk grader
+
+    safety:
+      high_risk_keywords:  the words/phrases that escalate a query or
+                           answer to a human supervisor. STRONGLY drop
+                           manufacturing-specific terms (LOTO, H2S, arc
+                           flash) if they don't apply, and add the
+                           domain's real hazards (e.g. mayday / engine
+                           fire / airworthiness / fatal dose / patient
+                           safety event / sanctions violation). An
+                           explicit empty list is a valid opt-out.
+
+    clarifier.intent_patterns:
+      List of {intent, patterns, boost} entries that layer on top of
+      the manufacturing-default regexes. Each ``intent`` MUST be one of
+      the canonical names: LOOKUP / COMPARISON / TROUBLESHOOTING /
+      COMPLIANCE / METRIC_QUERY / PROCEDURE / TREND / STATUS /
+      ROOT_CAUSE / UNKNOWN. ``patterns`` is a non-empty list of regex
+      strings. ``boost`` is the confidence (0.0–0.99) when any pattern
+      hits; default 0.85.
+
+    clarifier.slot_templates:
+      Per-intent slot replacements so the clarifier asks domain-natural
+      follow-ups. Example: aviation TROUBLESHOOTING uses
+      "Which engine or aircraft?" not "Which CNC line?". Each slot is
+      {name, entity_types, required, prompt}.
+
+    procedure:
+      enabled: <true|false>      true → run the structured procedure
+                                  drafter on trigger intents. false →
+                                  skip entirely (correct for purely
+                                  expository domains: legal lookup,
+                                  market research, medical reference).
+      trigger_intents: [list]    substring matchers against the
+                                  classified intent. Use prefix forms
+                                  like "diagnos" to catch
+                                  diagnose/diagnosis/diagnostic.
+
+    Validation is STRICT on all four blocks above — typos like
+    ``saftey`` or ``high_risk_keyword`` (singular) are rejected, and
+    YAML strings like ``enabled: "false"`` (quoted) raise. Always use
+    literal ``true`` / ``false`` for booleans.
+
     ## Follow-up questions
 
     Ask follow-ups ONLY when the docs leave a high-leverage choice
@@ -229,10 +537,50 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         truly no edge to declare)
       - All four ``self_check`` booleans are ``true``
 
-    ## Gold-standard example (the existing manufacturing schema)
+    ## Archetype-driven authoring (CRITICAL)
 
-    Imitate this shape exactly — block order, indentation, comment style.
+    The corpus has been pre-analysed by an upstream agent. You will
+    receive an ``archetype`` label, a per-archetype skeleton, and a
+    grounded list of candidate vocabulary terms WITH evidence quotes.
+
+    Authoring rules:
+
+      1. The archetype's skeleton is the STARTING POINT for your entity
+         and edge taxonomy. DO NOT carry entity types from a different
+         archetype's template. In particular: if archetype is NOT
+         ``maintenance_manual``, do NOT default to Equipment/Symptom/
+         Cause/SparePart/Alarm/FailureMode — that is the maintenance
+         template, not a universal default.
+
+      2. Every closed-vocabulary term you emit MUST appear in the
+         candidate_vocabulary list provided to you. You may DROP terms
+         (if they don't fit) but you may NOT ADD terms not in the list.
+         If you think a term is missing, leave a note in ``analysis``
+         instead of inventing it.
+
+      3. Every example query you emit MUST reference either (a) a
+         representative_id provided to you, or (b) a generic noun
+         phrase from the corpus — NEVER a fabricated ID like
+         ``EV-MTR-001`` that doesn't appear in the docs.
+
+      4. Every id_pattern you declare MUST be derived from a real ID
+         pattern in representative_ids. If representative_ids is empty,
+         DO NOT declare any entity type with an id_pattern.
+
+      5. The persona, safety.high_risk_keywords, classify_system
+         intents, and procedure_system safety preconditions MUST match
+         the archetype. Don't ship LOTO / arc-flash keywords for a
+         clinical or financial domain. Don't ship "diagnose the
+         alarm" intents for a process_tutorial.
+
+    Reference: when archetype == ``maintenance_manual`` you may also
+    consult the ``manufacturing.yaml`` reference block at the bottom of
+    the user message. For other archetypes that block will not appear —
+    use the skeleton and the candidate_vocabulary as your only guide.
     """).strip()
+
+# Backwards-compat alias — older callers and tests still import SYSTEM_PROMPT.
+SYSTEM_PROMPT = SYSTEM_PROMPT_DRAFT
 
 
 USER_TEMPLATE = textwrap.dedent("""\
@@ -241,9 +589,15 @@ USER_TEMPLATE = textwrap.dedent("""\
     User preferences:     {prefs}
 
     ============================================================
-    GOLD-STANDARD EXAMPLE — schemas/manufacturing.yaml
+    STAGE A — corpus characterization (use these as ground truth)
     ============================================================
-    {gold_standard}
+    {characterization_block}
+    ============================================================
+
+    ============================================================
+    Archetype skeleton — {archetype}
+    ============================================================
+    {archetype_skeleton}
     ============================================================
 
     Sample documents ({n_docs}, total {n_chars} chars):
@@ -254,12 +608,72 @@ USER_TEMPLATE = textwrap.dedent("""\
     Prior Q&A in this onboarding session (if any):
     {prior_qa}
     ============================================================
-
+    {gold_standard_block}
     Produce the structured JSON response per the system prompt.
     """).strip()
 
 
+# Re-prompt used by the repair loop when validation gates fail.
+SYSTEM_PROMPT_REPAIR = textwrap.dedent("""\
+    You previously authored a YAML schema for the Hybrid GraphRAG copilot.
+    Programmatic validation gates flagged the issues listed in the user
+    message. Your job: emit a CORRECTED schema that fixes every flagged
+    issue, while keeping unrelated blocks identical.
+
+    Hard rules:
+
+      1. Do not invent vocabulary or example IDs that are not in the
+         candidate lists. If a term has no grounding, drop it.
+      2. Anchor every id_pattern with ^...$ and verify it matches at
+         least one representative_id provided to you.
+      3. Keep the {critic_feedback} placeholder in retry_system and the
+         {top_k} + {taxonomy_clause} placeholders in cause_rank_system.
+      4. Do not change ``domain:`` or ``version:`` unless that is the
+         specific gate failure.
+
+    Output STRICT JSON ONLY, no markdown fences:
+
+      {
+        "yaml": "<the full corrected schema YAML>",
+        "fix_summary": "<one short paragraph: what you changed and why>"
+      }
+    """).strip()
+
+
 # ─── Response dataclass ────────────────────────────────────────────────────
+
+
+@dataclass
+class CorpusCharacterization:
+    """Output of Stage A — feeds Stage B as ground truth."""
+
+    archetype: str = "general_technical"
+    archetype_confidence: float = 0.0
+    archetype_rationale: str = ""
+    summary: str = ""
+    primary_actors: List[str] = field(default_factory=list)
+    primary_workflows: List[str] = field(default_factory=list)
+    recommended_entity_types: List[str] = field(default_factory=list)
+    candidate_vocabulary: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    representative_ids: List[Dict[str, Any]] = field(default_factory=list)
+    domain_hazards: List[str] = field(default_factory=list)
+    domain_intents: List[str] = field(default_factory=list)
+    raw_response: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "archetype": self.archetype,
+            "archetype_confidence": self.archetype_confidence,
+            "archetype_rationale": self.archetype_rationale,
+            "summary": self.summary,
+            "primary_actors": self.primary_actors,
+            "primary_workflows": self.primary_workflows,
+            "recommended_entity_types": self.recommended_entity_types,
+            "candidate_vocabulary": self.candidate_vocabulary,
+            "representative_ids": self.representative_ids,
+            "domain_hazards": self.domain_hazards,
+            "domain_intents": self.domain_intents,
+        }
 
 
 @dataclass
@@ -274,6 +688,10 @@ class OnboardingResponse:
     self_check: Dict[str, Any] = field(default_factory=dict)
     # Filled by the validator after the model emits a YAML.
     validation: Dict[str, Any] = field(default_factory=dict)
+    # Filled by Stage A; reported back so callers (and tests) can inspect.
+    corpus_characterization: Optional[CorpusCharacterization] = None
+    # How many repair attempts the loop made, for telemetry.
+    repair_attempts: int = 0
     raw_response: str = ""  # for debugging when JSON parsing fails
 
     def to_dict(self) -> Dict[str, Any]:
@@ -285,6 +703,11 @@ class OnboardingResponse:
             "yaml": self.yaml,
             "self_check": self.self_check,
             "validation": self.validation,
+            "corpus_characterization": (
+                self.corpus_characterization.to_dict()
+                if self.corpus_characterization else None
+            ),
+            "repair_attempts": self.repair_attempts,
         }
 
 
@@ -299,36 +722,18 @@ def analyze(
     user_prefs: Optional[Dict[str, Any]] = None,
     prior_qa: Optional[List[Dict[str, str]]] = None,
     model: Optional[str] = None,
+    force_generate: bool = False,
+    corpus_characterization: Optional[CorpusCharacterization] = None,
 ) -> OnboardingResponse:
     """Drive one round of the onboarding agent.
 
-    Parameters
-    ----------
-    domain_id
-        Lowercase identifier the new schema will use as its ``domain:``.
-    docs
-        List of pre-parsed plaintext sample documents. Each is truncated
-        to ``MAX_DOC_CHARS_PER_SAMPLE`` before being injected into the
-        prompt.
-    domain_hint
-        Optional free-text label the user provided (e.g. "piston-engine
-        aircraft maintenance"). Helps the model orient when docs are short.
-    user_prefs
-        Optional dict — passed through verbatim into the prompt. Useful
-        for ``{"target_audience": "mechanics", "color": "#0EA5E9"}``.
-    prior_qa
-        Optional list of ``{"question": ..., "answer": ...}`` pairs from
-        earlier turns of this onboarding session. The agent treats them
-        as authoritative when generating the next pass.
-    model
-        Override the model. Defaults to ``config.ONBOARDING_MODEL``.
+    Pipeline: Stage A (corpus characterization) → Stage B (schema draft)
+    → Stage C (validation gates) → Stage D (repair loop, ≤
+    ``MAX_REPAIR_ATTEMPTS`` retries).
 
-    Returns
-    -------
-    OnboardingResponse
-        Either ``ready_to_generate=True`` with a validated ``yaml`` blob,
-        or ``ready_to_generate=False`` with one or more
-        ``follow_up_questions``.
+    Stage A is run lazily on the first call of a multi-turn session;
+    callers can pass ``corpus_characterization=`` on subsequent turns to
+    skip the re-analysis.
     """
     _require_inputs(domain_id, docs)
     if not llm_available():
@@ -337,31 +742,72 @@ def analyze(
             "Ollama). config.llm_available() returned False."
         )
 
-    user_prompt = USER_TEMPLATE.format(
+    resolved_model = model or task_model("onboarding")
+
+    # ── Stage A — corpus characterization (cached across turns) ─────
+    if corpus_characterization is None:
+        try:
+            corpus_characterization = _characterize_corpus(
+                docs, domain_hint=domain_hint, model=resolved_model,
+            )
+        except Exception as e:
+            logger.warning("Stage A characterization failed: %r — falling back to general_technical", e)
+            corpus_characterization = CorpusCharacterization(
+                archetype="general_technical",
+                archetype_rationale=f"fallback: {e!r}",
+            )
+
+    # ── Stage B — schema drafter ───────────────────────────────────
+    user_prompt = _build_drafter_prompt(
         domain_id=domain_id,
-        domain_hint=domain_hint or "(none — infer from documents)",
-        prefs=json.dumps(user_prefs or {}, ensure_ascii=False),
-        gold_standard=_load_gold_standard(),
-        n_docs=len(docs),
-        n_chars=sum(len(d) for d in docs),
-        sample_blocks=_format_sample_blocks(docs),
-        prior_qa=_format_prior_qa(prior_qa or []),
+        domain_hint=domain_hint,
+        user_prefs=user_prefs,
+        prior_qa=prior_qa,
+        docs=docs,
+        characterization=corpus_characterization,
+        force_generate=force_generate,
     )
 
     raw = call_llm(
-        SYSTEM_PROMPT,
+        SYSTEM_PROMPT_DRAFT,
         user_prompt,
         temperature=0.2,
         max_tokens=4096,
-        model=model or ONBOARDING_MODEL,
+        model=resolved_model,
     )
 
     response = _parse_json_response(raw)
+    response.corpus_characterization = corpus_characterization
+
     if response.ready_to_generate and response.yaml:
-        response.validation = _validate_schema(response.yaml, docs)
-        # If validation fails hard we don't downgrade the response — the
-        # caller decides whether to re-prompt or surface the errors to the
-        # user verbatim.
+        # ── Stage C — validation (loader + grounding gates) ────────
+        report = _validate_schema(response.yaml, docs, corpus_characterization)
+        response.validation = report
+
+        # ── Stage D — repair loop ──────────────────────────────────
+        attempts = 0
+        while not report.get("all_passed") and attempts < MAX_REPAIR_ATTEMPTS:
+            attempts += 1
+            logger.info(
+                "Repair attempt %d/%d for domain %s — errors: %s",
+                attempts, MAX_REPAIR_ATTEMPTS, domain_id, report.get("errors"),
+            )
+            repaired_yaml = _repair_schema(
+                yaml_str=response.yaml,
+                report=report,
+                characterization=corpus_characterization,
+                docs=docs,
+                domain_id=domain_id,
+                model=resolved_model,
+            )
+            if not repaired_yaml or repaired_yaml.strip() == response.yaml.strip():
+                # Model couldn't improve; bail.
+                break
+            response.yaml = repaired_yaml
+            report = _validate_schema(repaired_yaml, docs, corpus_characterization)
+            response.validation = report
+        response.repair_attempts = attempts
+
     return response
 
 
@@ -419,6 +865,29 @@ def _format_sample_blocks(docs: List[str]) -> str:
     return "\n\n".join(blocks)
 
 
+def _format_clusters_block(mining: Optional[Any]) -> str:
+    """Render the vocab miner's clusters into a compact LLM-friendly
+    table. One cluster per line: label, doc-coverage, frequency, sample
+    quote (truncated). Stage A reads this and assigns each cluster to an
+    entity_type or drops it as noise."""
+    if mining is None or not getattr(mining, "clusters", None):
+        return "(miner unavailable or produced 0 clusters — extract directly from the sample docs above)"
+    lines = [
+        f"{'#':>3}  {'label':<35} cov/freq  members → sample_quote",
+        "    " + "-" * 100,
+    ]
+    for i, c in enumerate(mining.clusters, 1):
+        members_str = ", ".join(c.members[:3])
+        if len(c.members) > 3:
+            members_str += f" (+{len(c.members) - 3})"
+        quote = c.sample_quote.replace("\n", " ")[:120]
+        lines.append(
+            f"{i:>3}. {c.label[:35]:<35} {c.doc_coverage}d/{c.frequency:<3}f "
+            f"[{members_str}] → \"{quote}\""
+        )
+    return "\n".join(lines)
+
+
 def _format_prior_qa(qa: List[Dict[str, str]]) -> str:
     if not qa:
         return "(none — this is the first turn)"
@@ -464,14 +933,29 @@ def _parse_json_response(raw: str) -> OnboardingResponse:
     )
 
 
-def _validate_schema(yaml_str: str, sample_docs: List[str]) -> Dict[str, Any]:
-    """Run the three validation gates. Returns a report dict — caller
-    decides whether to surface failures back to the model for a re-prompt."""
+def _validate_schema(
+    yaml_str: str,
+    sample_docs: List[str],
+    characterization: Optional[CorpusCharacterization] = None,
+) -> Dict[str, Any]:
+    """Run validation gates 1-7. Returns a report dict — caller decides
+    whether to surface failures back to the model for a re-prompt.
+
+    Gates 5/6/7 are corpus-grounding gates: they require the vocabulary,
+    example IDs, and id_patterns the model emits to actually appear in
+    the sample documents. They catch the most common Stage B failure mode
+    — copy-pasting vocabulary or fabricating IDs that don't exist."""
     report: Dict[str, Any] = {
         "gate_1_loader_parses": False,
         "gate_2_round_trip_fraction": 0.0,
         "gate_2_passed": False,
         "gate_3_self_check": [],
+        "gate_5_vocab_grounding": [],
+        "gate_5_passed": True,
+        "gate_6_example_ids": [],
+        "gate_6_passed": True,
+        "gate_7_id_pattern_matches": [],
+        "gate_7_passed": True,
         "all_passed": False,
         "errors": [],
     }
@@ -550,9 +1034,456 @@ def _validate_schema(yaml_str: str, sample_docs: List[str]) -> Dict[str, Any]:
     checks.append({"name": "display_label_set", "passed": has_label})
     report["gate_3_self_check"] = checks
 
+    # Gate 4 — strict pydantic validation of the four NEW blocks
+    # (prompts / safety / clarifier / procedure). Catches typos like
+    # ``saftey:`` / ``high_risk_keyword:``, string-bool footguns like
+    # ``enabled: "false"``, and bad {placeholders} in retry_system /
+    # cause_rank_system that would explode at .format() time. Warnings
+    # don't fail the gate; errors do.
+    domain_id = str(parsed.get("domain") or "(unknown)").strip().lower()
+    new_block_result = validate_new_blocks(domain_id, parsed)
+    report["gate_4_new_blocks"] = {
+        "ok": new_block_result.ok,
+        "errors": list(new_block_result.errors),
+        "warnings": list(new_block_result.warnings),
+    }
+    if not new_block_result.ok:
+        report["errors"].extend(
+            f"new-blocks: {e}" for e in new_block_result.errors
+        )
+
+    # ── Gates 5, 6, 7 — corpus grounding ─────────────────────────────
+    # These prevent the most common Stage B drift: copy-pasted vocab,
+    # fabricated example IDs, id_patterns that match nothing in the docs.
+    corpus_text = " \n ".join(sample_docs).lower()
+
+    # Gate 5 — closed-vocab term grounding
+    vocab_report: List[Dict[str, Any]] = []
+    for et in parsed.get("entity_types", []) or []:
+        vocab = et.get("vocabulary") or []
+        if not vocab:
+            continue
+        present = [t for t in vocab if str(t).lower() in corpus_text]
+        absent = [t for t in vocab if str(t).lower() not in corpus_text]
+        frac = len(present) / max(len(vocab), 1)
+        passed = frac >= MIN_VOCAB_GROUNDING_FRACTION
+        vocab_report.append({
+            "entity_type": et.get("name"),
+            "fraction_present": round(frac, 3),
+            "absent": absent,
+            "passed": passed,
+        })
+        if not passed:
+            report["gate_5_passed"] = False
+            report["errors"].append(
+                f"vocab grounding: entity_type '{et.get('name')}' has "
+                f"{len(present)}/{len(vocab)} terms in the corpus "
+                f"(need ≥ {int(MIN_VOCAB_GROUNDING_FRACTION*100)}%). "
+                f"Absent terms: {absent[:8]}. "
+                f"These were likely copied from a template — drop them or "
+                f"replace with terms actually present in the docs."
+            )
+    report["gate_5_vocab_grounding"] = vocab_report
+
+    # Gate 6 — example queries must reference real IDs (when they look
+    # like IDs). We extract ID-shaped tokens (anything that matches a
+    # declared id_pattern) and check each one is present in the corpus.
+    # Strip ^...$ anchors so the pattern can match as a substring inside
+    # example queries and inside doc text. Authors are required to anchor
+    # the YAML pattern (Gate 3 checks), but for corpus grounding we need
+    # to search anywhere in the text.
+    def _unanchor(p: str) -> str:
+        s = p
+        if s.startswith("^"):
+            s = s[1:]
+        if s.endswith("$"):
+            s = s[:-1]
+        return s
+
+    declared_patterns = []
+    for et in parsed.get("entity_types", []) or []:
+        pat = et.get("id_pattern")
+        if pat:
+            try:
+                declared_patterns.append(
+                    (et.get("name"), re.compile(_unanchor(pat), re.IGNORECASE))
+                )
+            except re.error:
+                pass
+
+    examples_report: List[Dict[str, Any]] = []
+    for ex in parsed.get("examples", []) or []:
+        ex_str = str(ex)
+        for et_name, pat in declared_patterns:
+            for match in pat.findall(ex_str):
+                found = match if isinstance(match, str) else "".join(match)
+                if not found:
+                    continue
+                in_corpus = found.lower() in corpus_text
+                examples_report.append({
+                    "example": ex_str,
+                    "id": found,
+                    "entity_type": et_name,
+                    "in_corpus": in_corpus,
+                })
+                if not in_corpus:
+                    report["gate_6_passed"] = False
+                    report["errors"].append(
+                        f"example id grounding: example query {ex_str!r} "
+                        f"references id {found!r} which does not appear in "
+                        f"the corpus. Replace with a real id from the docs "
+                        f"or rephrase without an id."
+                    )
+    report["gate_6_example_ids"] = examples_report
+
+    # Gate 7 — every declared id_pattern must match at least one substring
+    # in the corpus. A pattern that matches nothing is dead weight and a
+    # strong signal the model invented an asset-tag convention that
+    # doesn't exist in this corpus.
+    id_pat_report: List[Dict[str, Any]] = []
+    for et_name, pat in declared_patterns:
+        # findall over corpus text — use the original case-insensitive
+        # compiled pattern. We search a window of each doc with word
+        # boundaries to keep this fast.
+        matches: List[str] = []
+        for doc_text in sample_docs:
+            for m in pat.finditer(doc_text):
+                matches.append(m.group(0))
+                if len(matches) >= 3:
+                    break
+            if len(matches) >= 3:
+                break
+        id_pat_report.append({
+            "entity_type": et_name,
+            "match_count": len(matches),
+            "sample_matches": matches[:3],
+        })
+        if not matches:
+            report["gate_7_passed"] = False
+            report["errors"].append(
+                f"id_pattern grounding: entity_type '{et_name}' declares "
+                f"an id_pattern but it matches 0 strings in the corpus. "
+                f"Either drop the id_pattern, drop the entity_type, or "
+                f"rewrite the pattern to match real ids in the docs."
+            )
+    report["gate_7_id_pattern_matches"] = id_pat_report
+
     report["all_passed"] = (
         report["gate_1_loader_parses"]
         and report["gate_2_passed"]
         and all(c["passed"] for c in checks)
+        and new_block_result.ok
+        and report["gate_5_passed"]
+        and report["gate_6_passed"]
+        and report["gate_7_passed"]
     )
     return report
+
+
+# ─── Stage A — corpus characterizer ─────────────────────────────────────────
+
+
+def _characterize_corpus(
+    docs: List[str],
+    *,
+    domain_hint: str = "",
+    model: Optional[str] = None,
+) -> CorpusCharacterization:
+    """Stage A. Deterministic miner runs first over the full corpus,
+    then a focused LLM call (a) picks the archetype and (b) labels each
+    mined cluster with an entity type (or drops it as noise).
+
+    Decoupling extraction (deterministic) from labelling (LLM) is what
+    fixes the 'gpt-4o only emits 2 vocab terms per type' bottleneck —
+    the miner produces ~40 candidate clusters from the full doc, and
+    the LLM only has to assign them.
+    """
+    # Mine candidate vocabulary clusters from the full corpus. Truncation
+    # affects only the LLM input, not the miner — so the miner sees 100%
+    # of the parsed text while the LLM sees a small clusters summary.
+    try:
+        from core.vocab_miner import mine_candidates  # noqa: PLC0415
+        mining = mine_candidates(docs, target_clusters=40)
+        logger.info(
+            "Vocab miner: %d clusters from %d docs (%d phrases kept, embeddings=%s)",
+            mining.cluster_count, mining.docs_seen,
+            mining.kept_phrase_count, mining.used_embeddings,
+        )
+    except Exception as exc:
+        logger.warning("Vocab miner failed: %r — Stage A falls back to LLM extraction", exc)
+        mining = None
+
+    sample_blocks = _format_sample_blocks(docs)
+    clusters_block = _format_clusters_block(mining)
+    user_prompt = textwrap.dedent(f"""\
+        Domain hint:  {domain_hint or "(none — infer from documents)"}
+        Sample documents ({len(docs)}, total {sum(len(d) for d in docs)} chars):
+
+        {sample_blocks}
+
+        ============================================================
+        Pre-mined candidate clusters (deterministic, full-corpus)
+        ============================================================
+        {clusters_block}
+        ============================================================
+
+        Produce the structured JSON brief per the system prompt. STRICT JSON.
+        Assign each mined cluster to an entity_type OR drop it as noise.
+        Use cluster labels verbatim as term names; copy the sample_quote
+        verbatim into evidence_quote.
+        """).strip()
+
+    raw = call_llm(
+        SYSTEM_PROMPT_CHARACTERIZE,
+        user_prompt,
+        temperature=0.1,
+        max_tokens=3072,
+        model=model or task_model("onboarding"),
+    )
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines)
+
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.warning("Stage A returned non-JSON: %s — using fallback", e)
+        return CorpusCharacterization(
+            archetype="general_technical",
+            archetype_rationale=f"fallback: JSON parse failed ({e})",
+            raw_response=raw,
+        )
+
+    archetype = str(payload.get("archetype") or "general_technical").strip()
+    if archetype not in ARCHETYPES:
+        logger.warning("Stage A produced unknown archetype %r — coercing to general_technical", archetype)
+        archetype = "general_technical"
+
+    return CorpusCharacterization(
+        archetype=archetype,
+        archetype_confidence=float(payload.get("archetype_confidence") or 0.0),
+        archetype_rationale=str(payload.get("archetype_rationale") or ""),
+        summary=str(payload.get("summary") or ""),
+        primary_actors=[str(x) for x in (payload.get("primary_actors") or [])],
+        primary_workflows=[str(x) for x in (payload.get("primary_workflows") or [])],
+        recommended_entity_types=[str(x) for x in (payload.get("recommended_entity_types") or [])],
+        candidate_vocabulary=dict(payload.get("candidate_vocabulary") or {}),
+        representative_ids=list(payload.get("representative_ids") or []),
+        domain_hazards=[str(x) for x in (payload.get("domain_hazards") or [])],
+        domain_intents=[str(x) for x in (payload.get("domain_intents") or [])],
+        raw_response=raw,
+    )
+
+
+# ─── Stage B — drafter prompt builder ───────────────────────────────────────
+
+
+def _format_characterization_block(c: CorpusCharacterization) -> str:
+    """Human-readable rendering of Stage A's output, embedded in the
+    drafter user message. We keep it short and prescriptive: archetype,
+    summary, candidate vocab with citations, representative IDs."""
+    parts = [
+        f"Archetype: {c.archetype}  (confidence {c.archetype_confidence:.2f})",
+        f"Rationale: {c.archetype_rationale}",
+        f"Summary:   {c.summary}",
+    ]
+    if c.primary_actors:
+        parts.append(f"Primary actors:    {', '.join(c.primary_actors)}")
+    if c.primary_workflows:
+        parts.append(f"Primary workflows: {', '.join(c.primary_workflows)}")
+    if c.recommended_entity_types:
+        parts.append(f"Recommended entity types: {', '.join(c.recommended_entity_types)}")
+    if c.domain_intents:
+        parts.append(f"Domain intents:    {', '.join(c.domain_intents)}")
+    if c.domain_hazards:
+        parts.append(f"Domain hazards:    {', '.join(c.domain_hazards)}")
+
+    if c.candidate_vocabulary:
+        parts.append("")
+        parts.append("Candidate vocabulary (use ONLY these terms — drop, don't add):")
+        for et_name, terms in c.candidate_vocabulary.items():
+            terms_list = []
+            for t in terms:
+                if isinstance(t, dict):
+                    term = t.get("term", "")
+                    quote = t.get("evidence_quote", "")
+                    snip = (quote[:60] + "…") if len(quote) > 60 else quote
+                    terms_list.append(f"      - {term!r}   ← {snip!r}")
+                else:
+                    terms_list.append(f"      - {str(t)!r}")
+            parts.append(f"   {et_name}:")
+            parts.extend(terms_list)
+
+    if c.representative_ids:
+        parts.append("")
+        parts.append("Representative IDs found in corpus (use ONLY these in examples / id_patterns):")
+        for rid in c.representative_ids:
+            if isinstance(rid, dict):
+                parts.append(
+                    f"   - {rid.get('id', '')!r}  pattern={rid.get('suggested_id_pattern', '')!r}"
+                )
+            else:
+                parts.append(f"   - {str(rid)!r}")
+    else:
+        parts.append("")
+        parts.append(
+            "Representative IDs: NONE — the corpus contains no asset-tag-style "
+            "identifiers. DO NOT declare any entity_type with an id_pattern, "
+            "and DO NOT reference invented IDs in examples."
+        )
+
+    return "\n".join(parts)
+
+
+def _build_drafter_prompt(
+    *,
+    domain_id: str,
+    domain_hint: str,
+    user_prefs: Optional[Dict[str, Any]],
+    prior_qa: Optional[List[Dict[str, str]]],
+    docs: List[str],
+    characterization: CorpusCharacterization,
+    force_generate: bool,
+) -> str:
+    """Build the Stage B user prompt. The gold-standard manufacturing
+    schema is inlined ONLY when archetype == maintenance_manual; for any
+    other archetype the model gets the (much shorter) archetype skeleton
+    plus Stage A's grounded candidates."""
+    archetype = characterization.archetype
+    skeleton = ARCHETYPE_SKELETONS.get(archetype, ARCHETYPE_SKELETONS["general_technical"])
+
+    if archetype == "maintenance_manual":
+        gold = _load_gold_standard()
+        gold_block = (
+            "============================================================\n"
+            "Maintenance-domain reference — schemas/manufacturing.yaml\n"
+            "(consult for shape only; do NOT carry over EV / aviation / etc.\n"
+            " specifics — your corpus is its own domain)\n"
+            "============================================================\n"
+            f"{gold}\n"
+            "============================================================\n"
+        )
+    else:
+        gold_block = (
+            "(no reference schema inlined — archetype is not maintenance_manual; "
+            "use the skeleton above and the candidate_vocabulary as your only guide)\n"
+        )
+
+    user_prompt = USER_TEMPLATE.format(
+        domain_id=domain_id,
+        domain_hint=domain_hint or "(none — infer from documents)",
+        prefs=json.dumps(user_prefs or {}, ensure_ascii=False),
+        characterization_block=_format_characterization_block(characterization),
+        archetype=archetype,
+        archetype_skeleton=skeleton,
+        n_docs=len(docs),
+        n_chars=sum(len(d) for d in docs),
+        sample_blocks=_format_sample_blocks(docs),
+        prior_qa=_format_prior_qa(prior_qa or []),
+        gold_standard_block=gold_block,
+    )
+
+    if force_generate or (prior_qa and len(prior_qa) >= 1):
+        user_prompt += textwrap.dedent("""
+
+            ============================================================
+            FORCE-GENERATE MODE
+            ============================================================
+            The user has already provided answers OR explicitly asked to
+            skip further questions. You MUST now emit a complete schema:
+
+              - ``ready_to_generate`` MUST be ``true``
+              - ``follow_up_questions`` MUST be an empty list ``[]``
+              - ``yaml`` MUST be a complete, valid schema YAML
+
+            For any remaining ambiguity, make a reasonable guess based on
+            the evidence in the documents and surface it in ``analysis``
+            as "Assumed X because Y". Do not refuse. Do not ask another
+            question. Ship a working schema; the user can iterate later.
+            """).strip()
+
+    return user_prompt
+
+
+# ─── Stage D — repair loop ──────────────────────────────────────────────────
+
+
+def _repair_schema(
+    *,
+    yaml_str: str,
+    report: Dict[str, Any],
+    characterization: CorpusCharacterization,
+    docs: List[str],
+    domain_id: str,
+    model: Optional[str] = None,
+) -> Optional[str]:
+    """Single repair pass. Given the failing report and the previous
+    YAML, ask the model for a corrected version targeted at the specific
+    gate failures. Returns the repaired YAML string, or None on parse
+    failure (caller bails out of the loop)."""
+    errors = report.get("errors") or []
+    if not errors:
+        return None
+
+    # Compact, actionable error list — keep it short so the model focuses.
+    error_block = "\n".join(f"  - {e}" for e in errors[:20])
+
+    user_prompt = textwrap.dedent(f"""\
+        Domain id:   {domain_id}
+        Archetype:   {characterization.archetype}
+
+        ## Failing validation gates
+
+        {error_block}
+
+        ## Candidate grounding (Stage A, ground truth)
+
+        {_format_characterization_block(characterization)}
+
+        ## Previous YAML (correct only the failing blocks; keep the rest)
+
+        ```yaml
+        {yaml_str}
+        ```
+
+        Emit STRICT JSON only:
+
+          {{"yaml": "<full corrected schema>", "fix_summary": "<one paragraph>"}}
+        """).strip()
+
+    raw = call_llm(
+        SYSTEM_PROMPT_REPAIR,
+        user_prompt,
+        temperature=0.1,
+        max_tokens=4096,
+        model=model or task_model("onboarding"),
+    )
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines)
+
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.warning("Stage D repair returned non-JSON: %s", e)
+        return None
+
+    new_yaml = str(payload.get("yaml") or "").strip()
+    if not new_yaml:
+        return None
+    summary = payload.get("fix_summary", "")
+    if summary:
+        logger.info("Repair pass applied: %s", summary)
+    return new_yaml

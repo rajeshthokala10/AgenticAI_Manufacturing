@@ -1,0 +1,203 @@
+version: 1
+domain: ev_manufacturing
+display:
+  label: EV Manufacturing
+  emoji: "🔋"
+  color: "#0EA5E9"   # sky-500
+
+entity_types:
+  - name: Equipment
+    description: Electric vehicle manufacturing equipment instance with a site asset tag.
+    id_pattern: '^(?:EV|MTR|BAT)-[A-Z0-9]{1,3}-?\d{2,4}$'
+    case_sensitive: false
+
+  - name: Component
+    description: A sub-component of electric vehicle equipment (hairpin stator, rotor, etc.).
+    case_sensitive: false
+    vocabulary:
+      - hairpin stator
+      - rotor
+      - axial flux motor
+      - lithium-ion battery
+      - anode
+      - cathode
+      - separator
+      - electrolyte
+
+  - name: Symptom
+    description: |
+      An observed condition extracted from narrative text. Intentionally
+      open-vocab so the NarrativeExtractor can surface arbitrary phrases
+      for HITL review.
+
+  - name: Cause
+    description: A root-cause candidate. Closed vocabulary.
+    case_sensitive: false
+    vocabulary:
+      - bearing wear
+      - seal leak
+      - belt slip
+      - misalignment
+      - overheating
+      - cavitation
+      - contamination
+      - electrical fault
+      - control loop instability
+
+  - name: Procedure
+    description: A diagnostic / maintenance / repair procedure step.
+
+  - name: Specification
+    description: A spec value (pressure, temperature limit, etc.).
+
+edge_types:
+  - name: HAS_COMPONENT
+    source: Equipment
+    target: Component
+    min_cardinality: 1
+
+  - name: HAS_SYMPTOM
+    source: Equipment
+    target: Symptom
+
+  - name: HAS_CAUSE
+    source: [Symptom, Equipment]
+    target: Cause
+
+  - name: RESOLVED_BY
+    source: [Symptom]
+    target: Procedure
+
+  - name: HAS_SPECIFICATION
+    source: Equipment
+    target: Specification
+
+prompts:
+  persona: ev manufacturing diagnostic copilot
+  answer_system: |
+    You are an EV manufacturing diagnostic copilot. You provide evidence-grounded answers
+    to equipment troubleshooting, maintenance, and operational queries.
+
+    RULES:
+    1. Only use information from the provided evidence chunks. Do not hallucinate.
+    2. Cite your sources using [source_name, chunk_id] format.
+    3. For troubleshooting queries, provide: Diagnosis, Root Cause candidates, Recommended Procedure, and Safety notes.
+    4. Always reference specific equipment IDs, alarm codes, and part numbers when available.
+    5. If evidence is insufficient, state what is missing rather than guessing.
+    6. Prioritize safety-critical information.
+  retry_system: |
+    You are an EV manufacturing diagnostic copilot. Your previous answer was rejected by the
+    quality critic for the following reasons. Generate an improved answer that addresses the issues.
+
+    CRITIC FEEDBACK:
+    {critic_feedback}
+
+    RULES:
+    1. Only use information from the provided evidence chunks. Do not hallucinate.
+    2. Address every issue raised by the critic.
+    3. Cite your sources using [source_name, chunk_id] format.
+    4. Be more conservative — if evidence is uncertain, say so explicitly.
+  critic_rules: |
+    You are a strict quality critic for EV manufacturing diagnostic answers.
+    Your job is to evaluate whether an answer is GROUNDED in the provided evidence.
+
+    Evaluate the answer against these criteria:
+    1. FACTUAL GROUNDING: Every claim must be traceable to a source chunk. No hallucinated facts.
+    2. COMPLETENESS: The answer should address the core question.
+    3. TECHNICAL ACCURACY: Equipment IDs, alarm codes, procedures must match the source data.
+    4. ACTIONABILITY: For troubleshooting queries, the answer must provide concrete next steps.
+    5. SAFETY: Any safety-critical procedures must include proper warnings.
+
+    Respond in this exact format:
+    VERDICT: PASS or FAIL
+    CONFIDENCE: 0.0 to 1.0
+    ISSUES: (list any issues found, or "None")
+    SUGGESTION: (if FAIL, describe what needs to change)
+  procedure_system: |
+    You are an EV manufacturing diagnostic copilot drafting a step-by-step
+    procedure for the user's troubleshooting query.
+
+    RULES:
+    1. The output MUST be STRICT JSON ONLY — a single object with key "steps".
+    2. Each step is an object: {"step": <int>, "action": "<imperative sentence>",
+       "citations": ["chunk_id_a", ...]}.
+    3. Every ``citations`` entry MUST be copied verbatim from the retrieved
+       evidence headers. Do NOT invent chunk ids.
+    4. Sequence the steps so safety preconditions come BEFORE any inspection or component handling.
+    5. Address the highest-ranked causes first. Reference equipment IDs and
+       alarm codes by name.
+    6. 5-10 steps total. Keep each action short (one sentence, imperative).
+    7. No prose before or after the JSON. No markdown fences.
+  cause_rank_system: |
+    You are an EV manufacturing root-cause analyst. Given a problem query and a set of
+    evidence chunks, identify and rank the most likely ROOT CAUSES.
+
+    RULES:
+    1. Every cause MUST be grounded in the evidence chunks provided. Do not invent causes.
+    2. Output STRICT JSON ONLY — a list of objects with keys: "cause", "score", "rationale", "evidence_chunk_ids".
+    3. "score" is a float in [0.0, 1.0] representing likelihood given the evidence. Use distinct scores.
+    4. "evidence_chunk_ids" is a list of chunk_id strings copied verbatim from the evidence headers.
+    5. Rank from MOST LIKELY (top) to LEAST LIKELY (bottom).
+    6. Return AT MOST {top_k} causes.
+    7. If the query is not about troubleshooting / failure analysis, return an empty list [].
+    {taxonomy_clause}
+    8. No prose before or after the JSON. No markdown fences.
+  classify_system: |
+    You classify EV manufacturing queries into exactly one intent category.
+
+    Categories:
+    - troubleshoot: diagnosing failures, root cause analysis, equipment faults, alarms tripping
+    - procedure: step-by-step instructions for maintenance, replacement, calibration, installation
+    - specification: looking up part specs, ratings, tolerances, dimensions, torque values
+    - inventory: spare parts availability, ordering, stock levels, lead times
+    - general: anything that doesn't fit the above categories
+
+    Respond with ONLY a JSON object, no other text:
+    {"intent": "<category>", "confidence": <0.0-1.0>}
+  risk_grader_system: You are an EV plant-safety risk grader. Return one float in [0,1].
+  risk_grader_user: |
+    On a scale of 0.0 (clearly safe to auto-approve) to 1.0 (must be reviewed by a human supervisor),
+    score the operational risk of executing the following proposed action in an EV manufacturing plant.
+    Reply with ONE number only, no prose.
+
+safety:
+  high_risk_keywords:
+    - lockout
+    - tagout
+    - hot work
+    - fire
+    - explosion
+    - toxic
+    - asphyxiation
+    - radiation
+    - shutdown
+    - emergency
+
+procedure:
+  enabled: true
+  trigger_intents:
+    - troubleshoot
+    - troubleshooting
+    - root_cause
+    - rootcause
+    - failure
+    - fault
+    - repair
+    - fix
+    - incident
+    - broken
+    - diagnos
+
+placeholder: "Ask anything about EV manufacturing processes…"
+empty_state:
+  heading: "How can I assist with EV production today?"
+  blurb: >
+    I can troubleshoot equipment, look up specifications, compare components, and
+    explain procedures — all grounded in your EV manufacturing documents.
+examples:
+  - "What is the production capacity for hairpin stators?"
+  - "Diagnose the issue with rotor assembly in EV-MTR-001."
+  - "What are the specifications for the lithium-ion battery separator?"
+  - "Compare the efficiency of axial flux motors vs radial flux motors."
+  - "What causes overheating in the EV-BAT-002 battery module?"
+  - "Explain the process of manufacturing a continuous hairpin stator."

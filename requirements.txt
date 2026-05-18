@@ -9,6 +9,17 @@ scikit-learn>=1.3.0
 numpy>=1.24.0
 tiktoken>=0.5.0
 pdfplumber>=0.10.0
+# ── Advanced PDF parser (doc_pipeline/advanced_parser) ────────────────────
+# Required when USE_ADVANCED_PARSER=true. pymupdf gives us multi-column /
+# encoding-aware extraction; img2table handles table detection + cross-page
+# merging; pytesseract + Pillow are only needed for OCR on scanned PDFs.
+pymupdf>=1.23.0
+img2table>=2.0.0  # 1.x broke against opencv 4.8+ (cv2.ximgproc.niBlackThreshold removed)
+pytesseract>=0.3.10
+Pillow>=10.0.0
+# Optional extras (DOCX / HTML parsing). Uncomment if you need them.
+# python-docx>=1.0.0
+# trafilatura>=1.6.0
 plotly>=5.18.0
 python-dotenv>=1.0.0
 reportlab>=4.0.0

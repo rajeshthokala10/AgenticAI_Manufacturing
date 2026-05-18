@@ -64,7 +64,6 @@ except ImportError:  # pragma: no cover - py<3.8
     from typing_extensions import TypedDict  # type: ignore
 
 from config import (
-    ANSWER_MODEL,
     CAUSE_RANK_TOP_K,
     GUARDRAILS_BLOCK_UNSAFE,
     GUARDRAILS_MIN_CITATIONS,
@@ -73,9 +72,6 @@ from config import (
     HITL_DB_PATH,
     HITL_RISK_THRESHOLD,
     MAX_CRITIC_RETRIES,
-    PROCEDURE_MODEL,
-    RETRY_MODEL,
-    TOOL_PLANNER_MODEL,
     TOOL_PLANNER_USE_LLM,
     TOP_K_RERANK,
     USE_CAUSE_RANKING,
@@ -85,11 +81,13 @@ from config import (
     USE_SEMANTIC_CACHE,
     USE_TOOLS,
 )
-from core.cause_ranker import _intent_is_troubleshooting
+from core.llm_router import task_model
+from core.cause_ranker import _TROUBLESHOOTING_TRIGGERS
 from core.cause_ranker import format_for_prompt as format_causes_for_prompt
 from core.cause_ranker import rank_causes
 from core.criticality_classifier import classify as classify_risk
 from core.critic import critic_evaluate
+from core.domain_prompts import get_prompt, procedure_should_run
 from core.guardrails import evaluate as guardrails_evaluate, merge_into_critic
 from core.knowledge_graph import KnowledgeGraph
 from core.llm_client import call_llm_with_metrics
@@ -203,6 +201,10 @@ class LangGraphOrchestrator:
 
     # ─── Public API ──────────────────────────────────────────────────────
 
+    @property
+    def _domain(self) -> Optional[str]:
+        return getattr(self.knowledge_graph, "domain", None)
+
     def initialize(self) -> None:
         if not self._indexed:
             self.retriever.build_indexes(skip_vector=self._skip_vector_build)
@@ -243,7 +245,7 @@ class LangGraphOrchestrator:
                 "completion_tokens": 0,
                 "total_tokens": 0,
                 "cost_estimate": 0.0,
-                "model": ANSWER_MODEL,
+                "model": task_model("answer"),
             },
             "timings": {},
             "thread_id": thread_id,
@@ -288,7 +290,7 @@ class LangGraphOrchestrator:
             "llm_metrics": {
                 "prompt_tokens": 0, "completion_tokens": 0,
                 "total_tokens": 0, "cost_estimate": 0.0,
-                "model": ANSWER_MODEL,
+                "model": task_model("answer"),
             },
             "timings": {},
             "thread_id": thread_id,
@@ -500,7 +502,7 @@ class LangGraphOrchestrator:
 
     def _format_node(self, state: GraphState) -> Dict[str, Any]:
         t0 = time.time()
-        formatted = format_query(state["raw_query"])
+        formatted = format_query(state["raw_query"], domain=self._domain)
         timings = dict(state.get("timings", {}))
         timings["query_formatting_ms"] = (time.time() - t0) * 1000
         return {"formatted": formatted, "timings": timings}
@@ -555,7 +557,7 @@ class LangGraphOrchestrator:
             state.get("raw_query", ""),
             intent=formatted.get("intent"),
             use_llm=TOOL_PLANNER_USE_LLM,
-            model=TOOL_PLANNER_MODEL,
+            model=task_model("tool"),
         )
         if not calls:
             return {}
@@ -591,6 +593,7 @@ class LangGraphOrchestrator:
             evidence_chunks=state.get("evidence", []),
             graph_context=state.get("graph_context"),
             top_k=CAUSE_RANK_TOP_K,
+            domain=self._domain,
         )
         timings = dict(state.get("timings", {}))
         timings["cause_ranking_ms"] = (time.time() - t0) * 1000
@@ -619,7 +622,8 @@ class LangGraphOrchestrator:
             query=formatted.get("expanded", state["raw_query"]),
             cause_candidates=cause_candidates,
             evidence_chunks=evidence,
-            model=PROCEDURE_MODEL,
+            model=task_model("procedure"),
+            domain=self._domain,
         )
         rendered = render_as_markdown(result.get("procedure", {})) or ""
 
@@ -651,9 +655,9 @@ class LangGraphOrchestrator:
             + "Provide a comprehensive, evidence-grounded answer. Cite sources for every claim."
         )
         result = call_llm_with_metrics(
-            system_prompt=ANSWER_SYSTEM_PROMPT,
+            system_prompt=get_prompt(self._domain, "answer_system", ANSWER_SYSTEM_PROMPT),
             user_prompt=user_prompt,
-            model=ANSWER_MODEL,
+            model=task_model("answer"),
         )
         timings = dict(state.get("timings", {}))
         timings["generation_ms"] = (time.time() - t0) * 1000
@@ -681,6 +685,7 @@ class LangGraphOrchestrator:
                 intent=formatted.get("intent"),
                 proposed_answer=state.get("answer", ""),
                 purchase_request=state.get("purchase_request"),
+                domain=self._domain,
             )
             risk = risk_obj.to_dict()
             logger.info("criticality: %s drivers=%s", risk["summary"], risk["drivers"])
@@ -736,6 +741,7 @@ class LangGraphOrchestrator:
             state["answer"],
             state["evidence"],
             attempt_idx,
+            domain=self._domain,
         )
         critic_result["latency_ms"] = (time.time() - t0) * 1000
 
@@ -783,9 +789,11 @@ class LangGraphOrchestrator:
             "Generate an improved answer that addresses the critic's concerns. Cite all sources."
         )
         result = call_llm_with_metrics(
-            system_prompt=RETRY_SYSTEM_PROMPT.format(critic_feedback=feedback),
+            system_prompt=get_prompt(
+                self._domain, "retry_system", RETRY_SYSTEM_PROMPT,
+            ).format(critic_feedback=feedback),
             user_prompt=retry_prompt,
-            model=RETRY_MODEL,
+            model=task_model("answer"),
         )
         timings = dict(state.get("timings", {}))
         timings["retry_ms"] = timings.get("retry_ms", 0.0) + (time.time() - t0) * 1000
@@ -801,26 +809,34 @@ class LangGraphOrchestrator:
         """Branch into the cause-ranking node, the procedure drafter, or the
         free-form answer generator depending on feature flags + intent.
 
-        Decision matrix (after retrieval finishes):
-
-        * cause-ranking ON + troubleshooting intent     → rank_causes
-        * procedure-drafting ON + troubleshooting       → draft_procedure
-        * otherwise                                     → generate
+        The procedure-drafter branch is gated by the schema's
+        ``procedure.enabled`` flag and its ``trigger_intents`` list, so
+        domains that don't produce sequential procedures (or that use a
+        different intent vocabulary) opt in/out per YAML.
         """
         formatted = state.get("formatted", {}) or {}
-        troubleshooting = _intent_is_troubleshooting(formatted.get("intent"))
+        intent = formatted.get("intent")
+        # Both stages gate on the same "this is a diagnostic / troubleshoot
+        # intent" predicate so a domain that opts out via
+        # ``procedure.enabled: false`` skips both — sensible for purely
+        # expository domains (legal lookup, medical reference, etc.).
+        diagnostic_ok = procedure_should_run(
+            self._domain, intent, _TROUBLESHOOTING_TRIGGERS,
+        )
 
-        if USE_CAUSE_RANKING and troubleshooting:
+        if USE_CAUSE_RANKING and diagnostic_ok:
             return "rank_causes"
-        if USE_PROCEDURE_DRAFTING and troubleshooting and state.get("evidence"):
+        if USE_PROCEDURE_DRAFTING and diagnostic_ok and state.get("evidence"):
             return "draft_procedure"
         return "generate"
 
     def _route_after_rank_causes(self, state: GraphState) -> str:
         """After cause-ranking, optionally hand off to the procedure drafter."""
         formatted = state.get("formatted", {}) or {}
-        troubleshooting = _intent_is_troubleshooting(formatted.get("intent"))
-        if USE_PROCEDURE_DRAFTING and troubleshooting and state.get("evidence"):
+        proc_ok = procedure_should_run(
+            self._domain, formatted.get("intent"), _TROUBLESHOOTING_TRIGGERS,
+        )
+        if USE_PROCEDURE_DRAFTING and proc_ok and state.get("evidence"):
             return "draft_procedure"
         return "generate"
 

@@ -258,6 +258,18 @@ export type DiagnosticResponse = {
   pipeline_status?: string;
 };
 
+// LLM backend status — drives the header pill in web/app/page.tsx.
+export type LlmBackendStatus = {
+  active: "local" | "cloud";
+  raw: "local" | "cloud" | "auto";
+  openai_key_valid: boolean;
+  ollama_reachable: boolean;
+  per_task: Record<string, string>;
+  profiles: Record<"local" | "cloud", Record<string, string>>;
+  tasks: string[];
+  backends: string[];
+};
+
 export type HealthResponse = {
   status: string;
   ready: boolean;
@@ -316,6 +328,12 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => jsonFetch<HealthResponse>("/api/health"),
   domains: () => jsonFetch<DomainCatalog>("/api/domains"),
+  llmBackendStatus: () => jsonFetch<LlmBackendStatus>("/api/llm/backend"),
+  setLlmBackend: (backend: "auto" | "local" | "cloud") =>
+    jsonFetch<LlmBackendStatus>("/api/llm/backend", {
+      method: "POST",
+      body: JSON.stringify({ backend }),
+    }),
   stats: (domain: Domain = DEFAULT_DOMAIN) =>
     jsonFetch<StatsResponse>(`/api/stats?domain=${domain}`),
   chat: (sessionId: string, message: string, domain: Domain = DEFAULT_DOMAIN) =>
